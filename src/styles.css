@@ -76,22 +76,23 @@ button {
 }
 
 /* Concave fillets where the notch meets the top edge, like a display cut-out. */
+/* --ear is set per view: never taller than the notch itself (the idle bar is only 6px). */
 .ear {
   position: absolute;
   top: 0;
-  width: 12px;
-  height: 12px;
+  width: var(--ear, 12px);
+  height: var(--ear, 12px);
   pointer-events: none;
 }
 
 .ear.is-left {
-  left: -12px;
-  background: radial-gradient(circle at 0 100%, transparent 11.5px, var(--bezel) 12px);
+  left: calc(-1 * var(--ear, 12px));
+  background: radial-gradient(circle at 0 100%, transparent calc(var(--ear, 12px) - 0.5px), var(--bezel) var(--ear, 12px));
 }
 
 .ear.is-right {
-  right: -12px;
-  background: radial-gradient(circle at 100% 100%, transparent 11.5px, var(--bezel) 12px);
+  right: calc(-1 * var(--ear, 12px));
+  background: radial-gradient(circle at 100% 100%, transparent calc(var(--ear, 12px) - 0.5px), var(--bezel) var(--ear, 12px));
 }
 
 .notch-clip {

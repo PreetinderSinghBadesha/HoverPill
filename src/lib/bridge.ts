@@ -17,7 +17,12 @@ import {
 export const inTauri = "__TAURI_INTERNALS__" in window;
 
 export type PillEvents = {
+  /** Open (true) or close the notch. */
   "pill:hover": boolean;
+  /** The pointer is over the closed notch: fade it so what's underneath shows. */
+  "pill:peek": boolean;
+  /** A fullscreen app covers the notch's monitor. */
+  "pill:fullscreen": boolean;
   "pill:permission": PermissionRequest;
   /** Claude stopped waiting (interrupted or timed out); drop the card. */
   "pill:permission-cancel": { id: string };

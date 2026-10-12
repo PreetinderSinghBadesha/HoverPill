@@ -26,8 +26,15 @@ pub struct Display {
     /// Size multiplier for the whole pill.
     pub scale: f64,
     /// Also open when the pointer rests on the notch; otherwise only pushing the pointer
-    /// against the top edge opens it.
+    /// against the top edge opens it, and pointing at the closed notch fades it out instead.
     pub open_on_hover: bool,
+    /// With nothing playing and no card showing, shrink to a thin bar.
+    pub compact_idle: bool,
+    /// Get out of the way while a fullscreen app covers the notch's monitor.
+    pub hide_in_fullscreen: bool,
+    /// Reserve a strip at the top of the monitor (like a taskbar) so maximised windows start
+    /// below the notch. Windows only.
+    pub reserve_space: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -54,7 +61,15 @@ pub const DURATION_RANGE: (f64, f64) = (2.0, 15.0);
 
 impl Default for Display {
     fn default() -> Self {
-        Self { monitor: None, top_offset: 0.0, scale: 1.0, open_on_hover: true }
+        Self {
+            monitor: None,
+            top_offset: 0.0,
+            scale: 1.0,
+            open_on_hover: false,
+            compact_idle: true,
+            hide_in_fullscreen: true,
+            reserve_space: false,
+        }
     }
 }
 
@@ -263,7 +278,8 @@ mod tests {
         let s: Settings = serde_json::from_str(r#"{ "display": { "scale": 1.2 } }"#).unwrap();
         assert_eq!(s.display.scale, 1.2);
         assert_eq!(s.display.top_offset, 0.0);
-        assert!(s.display.open_on_hover);
+        assert!(!s.display.open_on_hover && s.display.compact_idle && s.display.hide_in_fullscreen);
+        assert!(!s.display.reserve_space);
         assert!(s.notifications.enabled);
     }
 

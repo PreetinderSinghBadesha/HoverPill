@@ -12,6 +12,10 @@ const TAB_KEY = "hoverpill.notch.tab";
 type State = {
   /** The notch is open (pushed to the top edge, or rested on). */
   open: boolean;
+  /** The pointer is over the closed notch. */
+  peek: boolean;
+  /** A fullscreen app covers the notch's monitor. */
+  fullscreen: boolean;
   tab: Tab;
   media: MediaState | null;
   /** Cards still waiting to drop down. */
@@ -26,6 +30,8 @@ type State = {
 
 type Action =
   | { type: "open"; value: boolean }
+  | { type: "peek"; value: boolean }
+  | { type: "fullscreen"; value: boolean }
   | { type: "tab"; value: Tab }
   | { type: "media"; value: MediaState | null }
   | { type: "notify"; value: NotificationItem }
@@ -46,6 +52,10 @@ function reducer(state: State, action: Action): State {
       // Opening while cards are queued means "show me": jump to the list and drop the queue.
       if (state.queue.length) return { ...withTab(state, "notifications"), open: true, queue: [] };
       return { ...withTab(state, state.tab), open: true };
+    case "peek":
+      return { ...state, peek: action.value };
+    case "fullscreen":
+      return { ...state, fullscreen: action.value };
     case "tab":
       return withTab(state, action.value);
     case "media":
@@ -92,6 +102,8 @@ function savedTab(): Tab {
 
 const initial = (): State => ({
   open: false,
+  peek: false,
+  fullscreen: false,
   tab: savedTab(),
   media: null,
   queue: [],
@@ -129,6 +141,8 @@ export function usePillState(notificationMs: number) {
   useEffect(() => {
     const subs = [
       on("pill:hover", setOpen),
+      on("pill:peek", (value) => dispatch({ type: "peek", value })),
+      on("pill:fullscreen", (value) => dispatch({ type: "fullscreen", value })),
       on("pill:media", (value) => dispatch({ type: "media", value })),
       on("pill:notification", (value) => dispatch({ type: "notify", value })),
       on("pill:permission", (value) => dispatch({ type: "permission", value })),

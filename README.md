@@ -20,7 +20,13 @@ npm run tauri dev
 **Using the notch.** It sits flat against the top edge of the screen, like a laptop's camera notch.
 
 - **When it's closed, clicks go straight through it** to whatever is underneath, so browser tabs and title bars stay usable.
-- **To open it,** push the pointer against the top edge of the screen above the notch, or rest the pointer on it for about half a second. You can turn the resting option off in Settings.
+- **To open it,** push the pointer against the top edge of the screen above the notch.
+- **Staying out of the way:**
+  - Pointing at the closed notch fades it out so you can see what's underneath.
+  - With nothing happening, it shrinks to a thin bar.
+  - It hides while a fullscreen app (video, game, presentation, F11 browser) covers its screen.
+  - "Keep windows below the notch" in Settings reserves a strip at the top, like a taskbar, so maximised windows start below it. Windows only.
+  - If you prefer opening the notch by resting the pointer on it for about half a second, turn that on in Settings. It replaces the fade.
 - **Inside the open notch,** tabs switch between:
   - **Home:** what's playing, the latest notification, and a calendar
   - **Media:** large cover art and controls
@@ -36,7 +42,7 @@ The pill has no taskbar entry. Use the **tray icon** to open **Settings…**, to
 | Tab | What's there |
 |---|---|
 | General | Start at login, version |
-| Display | Which monitor, distance from the top edge (0 = attached notch, more = floating pill), size (80–140%), open on rest |
+| Display | Which monitor, distance from the top edge (0 = attached notch, more = floating pill), size (80–140%), open on rest, shrink when idle, hide during fullscreen, keep windows below the notch |
 | Notifications | On/off, how long each card stays (2–15 s), per-app on/off for apps that have sent notifications |
 | Media | On/off, per-player on/off (e.g. hide a browser so the pill shows Spotify) |
 

@@ -38,6 +38,16 @@
   - Pushed against the top edge: open within 350 ms.
   - Back to click-through after the pointer leaves.
   - All four tabs clickable. They were found through UI Automation and clicked with real mouse input.
+- **Staying out of the way** (the closed notch otherwise hides whatever is under it, e.g. browser tab titles):
+  - *Fade.* Rust emits `pill:peek` while the pointer is over the closed notch, and the notch drops to 12% opacity. "Open on rest" now defaults to off, because the two would fight; when it's on, the fade is skipped.
+  - *Idle bar.* With nothing playing and no card, the notch is a 120×6 bar. The top-edge trigger stays at least ±110 px wide around its centre so the bar is still easy to open.
+  - *Fullscreen.* Every ~0.3 s the loop checks whether the foreground window covers the notch's monitor. The desktop, the taskbar and maximised windows (`IsZoomed`) don't count: with an auto-hiding taskbar a maximised window covers the whole monitor too, and the first version mistook those for fullscreen apps. While a fullscreen app is up, the notch is hidden and the edge push and rest don't open it, but Claude permission cards still show. Linux has no check yet.
+  - *Reserved strip* (`appbar.rs`, opt-in, Windows only). The notch window is registered as a top AppBar (`ABM_NEW`, `ABM_QUERYPOS`, `ABM_SETPOS`) for the closed notch's height plus the top gap, so the work area shrinks and maximised windows start below. AppBars always span the full monitor width. The strip is re-synced on every placement pass and released (`ABM_REMOVE`) when the setting is turned off or the app exits (`RunEvent::Exit`).
+  - *Measured on Windows (125% scaling, auto-hiding taskbar):*
+    - Work area top went 0 → 40 with the strip on, and back to 0 after quitting.
+    - The notch hid under a fullscreen window and came back when it closed.
+    - It stayed visible with a maximised window in front.
+    - Pointing at it faded it.
 - **Look.** True black, flat against the top edge, with concave "ears" (radial-gradient fillets) where it meets the edge. The only colour is the album art's: `useArtworkColor` samples the cover into a 24×24 canvas, weighting saturated pixels. With a top gap set, it becomes a floating pill with all corners rounded and a shadow.
 - **Staying on top.** The window uses `alwaysOnTop`. Every second, a Windows-only call (`SetWindowPos(HWND_TOPMOST)`) puts it back on top, because borderless-fullscreen apps and the taskbar can rise above it. The same tick re-centers the window when monitors, resolution, or DPI change.
 - **Limits:**

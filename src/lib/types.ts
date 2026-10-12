@@ -51,6 +51,12 @@ export type Settings = {
     scale: number;
     /** Also open when the pointer rests on the notch (not just when pushed to the top edge). */
     openOnHover: boolean;
+    /** With nothing playing and no card showing, shrink to a thin bar. */
+    compactIdle: boolean;
+    /** Hide while a fullscreen app covers the notch's monitor. */
+    hideInFullscreen: boolean;
+    /** Reserve a strip at the top so maximised windows start below the notch (Windows only). */
+    reserveSpace: boolean;
   };
   notifications: {
     enabled: boolean;
@@ -64,7 +70,7 @@ export type Settings = {
 };
 
 export const DEFAULT_SETTINGS: Settings = {
-  display: { monitor: null, topOffset: 0, scale: 1, openOnHover: true },
+  display: { monitor: null, topOffset: 0, scale: 1, openOnHover: false, compactIdle: true, hideInFullscreen: true, reserveSpace: false },
   notifications: { enabled: true, durationSecs: 4.5, blockedApps: [] },
   media: { enabled: true, ignoredPlayers: [] },
 };

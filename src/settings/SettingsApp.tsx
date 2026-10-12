@@ -17,6 +17,9 @@ type TabId = (typeof TABS)[number]["id"];
 
 const TAB_KEY = "hoverpill.settings.tab";
 
+/** The top-strip reservation uses a Windows shell API; there's no equivalent wired up on Linux yet. */
+const IS_WINDOWS = navigator.userAgent.includes("Windows");
+
 function initialTab(): TabId {
   try {
     const saved = localStorage.getItem(TAB_KEY);
@@ -202,9 +205,34 @@ function DisplayTab({ settings, update }: { settings: Settings; update: Update }
       <Section title="Opening">
         <SwitchRow
           title="Open when the pointer rests on the notch"
-          description="Push the pointer against the top edge above the notch to open it instantly. With this on, resting on it for a moment also works. Clicks on the closed notch always go to whatever is underneath."
+          description="Push the pointer against the top edge above the notch to open it. With this off, pointing at the closed notch fades it out so you can see what's underneath. Clicks on the closed notch always go through to it."
           checked={d.openOnHover}
           onChange={(openOnHover) => setDisplay({ openOnHover })}
+        />
+      </Section>
+      <Section title="Staying out of the way">
+        <SwitchRow
+          title="Shrink when nothing is happening"
+          description="With nothing playing and no notification, the notch becomes a thin bar."
+          checked={d.compactIdle}
+          onChange={(compactIdle) => setDisplay({ compactIdle })}
+        />
+        <SwitchRow
+          title="Hide during fullscreen apps"
+          description="Videos, games and presentations get the whole screen. Claude Code requests still appear."
+          checked={d.hideInFullscreen}
+          onChange={(hideInFullscreen) => setDisplay({ hideInFullscreen })}
+        />
+        <SwitchRow
+          title="Keep windows below the notch"
+          description={
+            IS_WINDOWS
+              ? "Reserves a strip across the top of the screen, like a taskbar, so maximised windows start below the notch. You lose that strip's height across the whole width."
+              : "Only available on Windows for now."
+          }
+          checked={d.reserveSpace}
+          disabled={!IS_WINDOWS}
+          onChange={(reserveSpace) => setDisplay({ reserveSpace })}
         />
       </Section>
       <Section title="Size">

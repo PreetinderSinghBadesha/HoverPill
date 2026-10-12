@@ -11,13 +11,21 @@ import { ExpandedView, IdleView, MediaCompactView, NotificationView, PermissionV
  * Target size per view, in CSS px. The window is fixed (see notch.rs); only the notch morphs.
  * `radius` is the bottom corners; attached to the top edge the top corners are square.
  */
-const SIZES: Record<View, { width: number; height: number; radius: number }> = {
+type Size = { width: number; height: number; radius: number };
+
+const SIZES: Record<View, Size> = {
   idle: { width: 190, height: 30, radius: 12 },
   media: { width: 300, height: 32, radius: 14 },
   notification: { width: 420, height: 78, radius: 24 },
   permission: { width: 520, height: 204, radius: 26 },
   expanded: { width: 680, height: 300, radius: 30 },
 };
+
+/** Idle with "shrink when idle" on: a thin bar that barely overlaps anything. */
+const IDLE_BAR: Size = { width: 120, height: 6, radius: 3 };
+
+/** Pointed at while closed: faint enough to read the browser tab underneath, still findable. */
+const PEEK_OPACITY = 0.12;
 
 // Slightly under-damped so the notch overshoots a touch as it drops, then settles.
 const SPRING: Transition = { type: "spring", stiffness: 420, damping: 32, mass: 0.9 };
@@ -30,9 +38,13 @@ export function Pill() {
   const { state, view, dispatch, setOpen } = usePillState(durationMs);
   const accent = useArtworkColor(state.media?.artwork);
   const ref = useRef<HTMLDivElement>(null);
-  const size = SIZES[view];
+  const size = view === "idle" && settings.display.compactIdle ? IDLE_BAR : SIZES[view];
+  // Behind a fullscreen app only a Claude request (which is waiting on you) still shows.
+  const hidden = state.fullscreen && view !== "permission";
   // Closed (and a passing notification) never takes clicks, so browser tabs underneath stay usable.
-  const interactive = view === "expanded" || view === "permission";
+  const interactive = !hidden && (view === "expanded" || view === "permission");
+  // Pointing at the closed notch fades it, unless resting is how you open it.
+  const faded = state.peek && !interactive && !settings.display.openOnHover;
 
   // Report the notch's on-screen box to Rust every time it changes size (every frame of the
   // spring), so click-through always matches what's drawn. Scale, top gap and window resizes
@@ -66,7 +78,7 @@ export function Pill() {
         <motion.div
           ref={ref}
           className={`notch ${attached ? "is-attached" : "is-floating"}${accent ? " has-accent" : ""}`}
-          style={accent ? ({ "--accent": accent } as CSSProperties) : undefined}
+          style={{ ...(accent ? { "--accent": accent } : {}), "--ear": `${Math.min(12, size.height)}px` } as CSSProperties}
           initial={false}
           animate={{
             width: size.width,
@@ -75,8 +87,9 @@ export function Pill() {
             borderBottomRightRadius: bottom,
             borderTopLeftRadius: top,
             borderTopRightRadius: top,
+            opacity: hidden ? 0 : faded ? PEEK_OPACITY : 1,
           }}
-          transition={SPRING}
+          transition={{ ...SPRING, opacity: { duration: 0.15, ease: "easeOut" } }}
           // In Tauri, opening is decided by the Rust cursor poller; these only drive the browser preview.
           onMouseEnter={inTauri ? undefined : () => setOpen(true)}
           onMouseLeave={inTauri ? undefined : () => setOpen(false)}

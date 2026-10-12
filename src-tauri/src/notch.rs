@@ -18,7 +18,8 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, State, WebviewWindow};
 
-use crate::settings::SettingsStore;
+use crate::appbar;
+use crate::settings::{Display, SettingsStore};
 
 pub const LABEL: &str = "pill";
 
@@ -39,6 +40,14 @@ const EDGE_PX: f64 = 2.0;
 /// enough that reaching for a browser tab underneath doesn't open it. Measured in real time:
 /// `sleep(16ms)` can take twice that on Windows, so counting ticks would drift.
 const DWELL: Duration = Duration::from_millis(600);
+/// The top-edge trigger is at least this wide either side of the notch's centre (CSS px), so
+/// the thin idle bar is still easy to open.
+const EDGE_HALF_WIDTH: f64 = 110.0;
+/// How often to look for a fullscreen app (~0.3 s at the poll rate).
+const FULLSCREEN_CHECK_EVERY: u64 = 20;
+/// Height (CSS px, before scale) of the strip "Keep windows below the notch" reserves: the
+/// closed notch with something playing. Cards and the open notch still drop over windows.
+const RESERVED_HEIGHT: f64 = 32.0;
 
 /// The notch's box in CSS px, relative to the window's top-left corner.
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -74,18 +83,44 @@ fn chosen_monitor(win: &WebviewWindow, wanted: Option<&str>) -> Result<Monitor, 
     }
 }
 
-/// Where the window should be: horizontally centered at the top of the chosen monitor, sized
-/// for the pill's scale and top gap (both applied in CSS; see src/pill/Pill.tsx).
-fn target_geometry(win: &WebviewWindow) -> Result<(PhysicalPosition<i32>, PhysicalSize<u32>), Box<dyn Error>> {
+/// Where everything should be, in physical screen pixels.
+struct Target {
+    /// Window position and size: horizontally centered at the top of the chosen monitor, sized
+    /// for the notch's scale and top gap (both applied in CSS; see src/pill/Pill.tsx).
+    pos: PhysicalPosition<i32>,
+    size: PhysicalSize<u32>,
+    /// The chosen monitor's bounds: x, y, width, height.
+    monitor: (i32, i32, i32, i32),
+    /// The strip to keep windows out of, if "Keep windows below the notch" is on.
+    reserve: Option<appbar::Strip>,
+}
+
+fn target(win: &WebviewWindow) -> Result<Target, Box<dyn Error>> {
     let display = win.try_state::<SettingsStore>().map(|s| s.get().display).unwrap_or_default();
     let monitor = chosen_monitor(win, display.monitor.as_deref())?;
     let dpi = monitor.scale_factor();
     let width = WINDOW_WIDTH * display.scale;
     let height = display.top_offset + WINDOW_HEIGHT * display.scale;
     let size = PhysicalSize::new((width * dpi).round() as u32, (height * dpi).round() as u32);
-    let origin = monitor.position();
-    let x = origin.x + (monitor.size().width as i32 - size.width as i32) / 2;
-    Ok((PhysicalPosition::new(x, origin.y), size))
+    let origin = *monitor.position();
+    let (mw, mh) = (monitor.size().width as i32, monitor.size().height as i32);
+    let x = origin.x + (mw - size.width as i32) / 2;
+    let reserve = display.reserve_space.then(|| {
+        let strip = ((display.top_offset + RESERVED_HEIGHT * display.scale) * dpi).round() as i32;
+        (origin.x, origin.y, origin.x + mw, origin.y + strip)
+    });
+    Ok(Target { pos: PhysicalPosition::new(x, origin.y), size, monitor: (origin.x, origin.y, mw, mh), reserve })
+}
+
+/// The native window handle as an integer (0 where there isn't a Win32 one).
+fn native_handle(win: &WebviewWindow) -> isize {
+    #[cfg(windows)]
+    return win.hwnd().map(|h| h.0 as isize).unwrap_or(0);
+    #[cfg(not(windows))]
+    {
+        let _ = win;
+        0
+    }
 }
 
 #[derive(Serialize)]
@@ -122,26 +157,32 @@ pub fn list_monitors(app: AppHandle) -> Result<Vec<MonitorInfo>, String> {
 /// Moves/resizes the window only if it isn't already where it should be, so this is cheap to
 /// call periodically (monitors get plugged in, resolution and DPI scale change).
 pub fn place_top_center(win: &WebviewWindow) -> Result<(), Box<dyn Error>> {
-    let (pos, size) = target_geometry(win)?;
+    let t = target(win)?;
     // Position first: moving onto a monitor with a different DPI rescales the window.
-    if win.outer_position()? != pos {
-        win.set_position(pos)?;
+    if win.outer_position()? != t.pos {
+        win.set_position(t.pos)?;
     }
-    if win.inner_size()? != size {
-        win.set_size(size)?;
+    if win.inner_size()? != t.size {
+        win.set_size(t.size)?;
     }
+    appbar::sync(native_handle(win), t.reserve);
     Ok(())
 }
 
-/// Cached so the 60 Hz loop makes one cross-thread call (cursor) instead of three.
+/// Cached so the 60 Hz loop makes one cross-thread call (cursor) instead of several.
 struct Geometry {
     origin: PhysicalPosition<i32>,
     scale: f64,
+    monitor: (i32, i32, i32, i32),
 }
 
 impl Geometry {
     fn read(win: &WebviewWindow) -> Option<Self> {
-        Some(Self { origin: win.inner_position().ok()?, scale: win.scale_factor().ok()? })
+        Some(Self {
+            origin: win.inner_position().ok()?,
+            scale: win.scale_factor().ok()?,
+            monitor: target(win).ok()?.monitor,
+        })
     }
 }
 
@@ -166,11 +207,43 @@ fn read_pointer(win: &WebviewWindow, geo: &Geometry) -> Pointer {
     let x = (cursor.x - geo.origin.x as f64) / geo.scale;
     let y = (cursor.y - geo.origin.y as f64) / geo.scale;
     let within_x = x >= r.x - HIT_PADDING && x <= r.x + r.width + HIT_PADDING;
+    // The idle bar is narrow, so the top-edge zone is at least EDGE_HALF_WIDTH either side of
+    // its centre: easy to hit without aiming.
+    let centre = r.x + r.width / 2.0;
+    let within_edge_zone = (x - centre).abs() <= (r.width / 2.0 + HIT_PADDING).max(EDGE_HALF_WIDTH);
     Pointer {
         over: within_x && y >= r.y - HIT_PADDING && y <= r.y + r.height + HIT_PADDING,
-        at_edge: within_x && cursor.y - geo.origin.y as f64 <= EDGE_PX && cursor.y >= geo.origin.y as f64,
+        at_edge: within_edge_zone && cursor.y - geo.origin.y as f64 <= EDGE_PX && cursor.y >= geo.origin.y as f64,
         interactive,
     }
+}
+
+/// Whether the foreground window covers the whole monitor, i.e. a fullscreen video, game or
+/// presentation (or a browser in F11). The desktop and the taskbar don't count, and neither
+/// does a maximised window: with an auto-hiding taskbar those cover the whole monitor too, but
+/// they're ordinary windows (IsZoomed), not fullscreen apps.
+#[cfg(windows)]
+fn fullscreen_app_on(win: &WebviewWindow, (mx, my, mw, mh): (i32, i32, i32, i32)) -> bool {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetForegroundWindow, GetWindowRect, IsZoomed};
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg.is_null() || fg as isize == native_handle(win) || IsZoomed(fg) != 0 {
+            return false;
+        }
+        let mut class = [0u16; 64];
+        let len = GetClassNameW(fg, class.as_mut_ptr(), class.len() as i32).max(0) as usize;
+        if matches!(String::from_utf16_lossy(&class[..len]).as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd") {
+            return false;
+        }
+        let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        GetWindowRect(fg, &mut r) != 0 && r.left <= mx && r.top <= my && r.right >= mx + mw && r.bottom >= my + mh
+    }
+}
+
+#[cfg(not(windows))]
+fn fullscreen_app_on(_win: &WebviewWindow, _monitor: (i32, i32, i32, i32)) -> bool {
+    false
 }
 
 pub fn spawn_hit_test_loop(win: WebviewWindow) {
@@ -179,7 +252,9 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
         let mut open = false;
         let mut accepting_input = false;
         let mut resting_since: Option<Instant> = None;
-        let mut open_on_hover = true;
+        let mut display = Display::default();
+        let mut fullscreen = false;
+        let mut peek = false;
         let mut focus = FocusGuard::default();
         let _ = win.set_ignore_cursor_events(true);
         for tick in 0u64.. {
@@ -191,7 +266,17 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
                 }
                 reassert_topmost(&win);
                 geo = Geometry::read(&win);
-                open_on_hover = win.try_state::<SettingsStore>().is_none_or(|s| s.get().display.open_on_hover);
+                if let Some(store) = win.try_state::<SettingsStore>() {
+                    display = store.get().display;
+                }
+            }
+
+            if tick % FULLSCREEN_CHECK_EVERY == 0 {
+                let now = display.hide_in_fullscreen && geo.as_ref().is_some_and(|g| fullscreen_app_on(&win, g.monitor));
+                if now != fullscreen {
+                    fullscreen = now;
+                    let _ = win.emit("pill:fullscreen", fullscreen);
+                }
             }
 
             let p = geo.as_ref().map(|g| read_pointer(&win, g)).unwrap_or_default();
@@ -204,10 +289,14 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
 
             // Interactive (open, or a card with buttons): stays open while the pointer is over it.
             // Closed: only the top-edge push or a long rest opens it; it never takes clicks.
+            // Behind a fullscreen app, nothing opens it (video players put their controls at the
+            // top edge too).
             let want_open = if p.interactive {
                 p.over || p.at_edge
+            } else if fullscreen {
+                false
             } else {
-                p.at_edge || (open_on_hover && rested)
+                p.at_edge || (display.open_on_hover && rested)
             };
             if want_open != open {
                 open = want_open;
@@ -215,6 +304,13 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
                     focus.remember(&win);
                 }
                 let _ = win.emit("pill:hover", open);
+            }
+
+            // Pointing at the closed notch fades it out so whatever is underneath shows.
+            let want_peek = p.over && !p.interactive && !open;
+            if want_peek != peek {
+                peek = want_peek;
+                let _ = win.emit("pill:peek", peek);
             }
 
             let want_input = p.interactive && p.over;

@@ -1,6 +1,7 @@
 // No console window in release builds on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod appbar;
 mod autostart;
 mod broker;
 mod events;
@@ -88,6 +89,12 @@ fn main() {
             tray::init(app)?;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running HoverPill");
+        .build(tauri::generate_context!())
+        .expect("error while building HoverPill")
+        .run(|_app, event| {
+            // Give the reserved top strip back, or Windows keeps it until it notices we're gone.
+            if let tauri::RunEvent::Exit = event {
+                appbar::release();
+            }
+        });
 }
