@@ -1496,6 +1496,7 @@ dependencies = [
  "png 0.17.16",
  "windows",
  "windows-future",
+ "winreg",
  "zbus",
 ]
 

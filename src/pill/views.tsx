@@ -11,6 +11,7 @@ import type {
   Tab,
 } from "../lib/types";
 import { Icon, type IconName } from "./icons";
+import { formatCountdown, formatElapsed, MAX_DURATION, stopwatchElapsed, timerLeft, type Timers } from "../lib/useTimers";
 
 // ---------- closed ----------
 
@@ -18,12 +19,46 @@ export function IdleView() {
   return <div className="idle" />;
 }
 
-/** Closed with something playing: the cover on the left, its colour bleeding into the black. */
-export function MediaCompactView({ media }: { media: MediaState }) {
+/**
+ * Closed with something playing: the cover on the left, its colour bleeding into the black.
+ * A running timer or stopwatch takes the visualizer's place on the right.
+ */
+export function MediaCompactView({ media, clock }: { media: MediaState; clock: string | null }) {
   return (
     <div className="compact">
       <Artwork media={media} className="compact-art" />
-      <Visualizer playing={media.playing} />
+      {clock ? <span className="compact-clock">{clock}</span> : <Visualizer playing={media.playing} />}
+    </div>
+  );
+}
+
+/** Closed, nothing playing, a timer or stopwatch running. */
+export function TimerCompactView({ clock }: { clock: string }) {
+  return (
+    <div className="compact">
+      <Icon name="timer" className="compact-timer-icon" />
+      <span className="compact-clock">{clock}</span>
+    </div>
+  );
+}
+
+/** The timer ran out. Stays until you deal with it. */
+export function AlarmView({ durationMs, onSnooze, onDone }: { durationMs: number; onSnooze: () => void; onDone: () => void }) {
+  return (
+    <div className="card-alarm">
+      <span className="alarm-icon" aria-hidden>
+        <Icon name="timer" />
+      </span>
+      <div className="card-text">
+        <div className="card-title">Time's up</div>
+        <div className="card-body">{describeDuration(durationMs)} timer</div>
+      </div>
+      <button type="button" className="btn btn-quiet alarm-button" onClick={onSnooze}>
+        +1 min
+      </button>
+      <button type="button" className="btn btn-solid alarm-button" onClick={onDone}>
+        Done
+      </button>
     </div>
   );
 }
@@ -83,6 +118,7 @@ export function PermissionView({ request, queued, onDecide }: { request: Permiss
 const TABS: { id: Tab; label: string; icon: IconName }[] = [
   { id: "home", label: "Home", icon: "home" },
   { id: "media", label: "Media", icon: "music" },
+  { id: "timer", label: "Timer", icon: "timer" },
   { id: "notifications", label: "Notifications", icon: "bell" },
   { id: "claude", label: "Claude", icon: "spark" },
 ];
@@ -96,6 +132,7 @@ export type ExpandedProps = {
   unseen: number;
   onClearHistory: () => void;
   decisions: PastDecision[];
+  timers: Timers;
   onSettings: () => void;
 };
 
@@ -108,6 +145,7 @@ export function ExpandedView(props: ExpandedProps) {
           {TABS.map((t) => {
             const active = t.id === props.tab;
             const badge = t.id === "notifications" && props.unseen > 0 ? props.unseen : 0;
+            const ticking = t.id === "timer" && (props.timers.timer.status === "running" || props.timers.stopwatch.startedAt !== null);
             return (
               <button
                 key={t.id}
@@ -121,6 +159,7 @@ export function ExpandedView(props: ExpandedProps) {
                 <Icon name={t.icon} />
                 {active && <span className="tab-label">{t.label}</span>}
                 {badge > 0 && <span className="tab-badge">{badge > 9 ? "9+" : badge}</span>}
+                {ticking && !active && <span className="tab-dot" aria-label="running" />}
               </button>
             );
           })}
@@ -144,6 +183,7 @@ export function ExpandedView(props: ExpandedProps) {
         >
           {props.tab === "home" && <HomeTab {...props} now={now} />}
           {props.tab === "media" && <MediaTab media={props.media} onMedia={props.onMedia} />}
+          {props.tab === "timer" && <TimerTab timers={props.timers} />}
           {props.tab === "notifications" && <NotificationsTab history={props.history} onClear={props.onClearHistory} now={now} />}
           {props.tab === "claude" && <ClaudeTab decisions={props.decisions} now={now} />}
         </motion.div>
@@ -280,6 +320,161 @@ function ClaudeTab({ decisions, now }: { decisions: PastDecision[]; now: Date })
       </ul>
     </div>
   );
+}
+
+// ---------- Timer tab ----------
+
+const PRESETS_MIN = [1, 3, 5, 10, 15, 25, 45, 60];
+
+function TimerTab({ timers }: { timers: Timers }) {
+  // Opens on whichever one is in use; otherwise the countdown.
+  const [mode, setMode] = useState<"timer" | "stopwatch">(() =>
+    timers.stopwatch.startedAt !== null && timers.timer.status !== "running" ? "stopwatch" : "timer",
+  );
+  return (
+    <div className="timer-tab">
+      <div className="segmented" role="tablist" aria-label="Timer or stopwatch">
+        {(["timer", "stopwatch"] as const).map((m) => (
+          <button key={m} type="button" role="tab" aria-selected={mode === m} className={`segment${mode === m ? " is-active" : ""}`} onClick={() => setMode(m)}>
+            {m === "timer" ? "Timer" : "Stopwatch"}
+          </button>
+        ))}
+      </div>
+      {mode === "timer" ? <CountdownPane timers={timers} /> : <StopwatchPane timers={timers} />}
+    </div>
+  );
+}
+
+function CountdownPane({ timers }: { timers: Timers }) {
+  const { timer, now, timerActions: act } = timers;
+  const left = timerLeft(timer, now);
+  const idle = timer.status === "idle" || timer.status === "done";
+  const progress = idle ? 0 : 1 - left / timer.durationMs;
+  return (
+    <div className="timer-pane">
+      <div className="timer-main">
+        <div className="big-clock" aria-live="off">
+          {formatCountdown(left)}
+        </div>
+        <div className="timer-progress" aria-hidden>
+          <span style={{ transform: `scaleX(${progress})` }} />
+        </div>
+        <div className="timer-caption">
+          {timer.status === "running" && `${describeDuration(timer.durationMs)} timer, ends at ${new Date(timer.endsAt ?? now).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`}
+          {timer.status === "paused" && `Paused, ${describeDuration(timer.durationMs)} timer`}
+          {idle && "Pick a length, then start"}
+        </div>
+        <div className="timer-controls">
+          {idle ? (
+            <>
+              <button type="button" className="round-button is-medium" aria-label="One minute less" onClick={() => act.setDuration(timer.durationMs - 60_000)} disabled={timer.durationMs <= 60_000}>
+                <Icon name="minus" />
+              </button>
+              <button type="button" className="pill-button is-solid" onClick={act.start}>
+                <Icon name="play" />
+                Start
+              </button>
+              <button type="button" className="round-button is-medium" aria-label="One minute more" onClick={() => act.setDuration(timer.durationMs + 60_000)} disabled={timer.durationMs >= MAX_DURATION}>
+                <Icon name="plus" />
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button" className="pill-button" onClick={act.reset}>
+                Reset
+              </button>
+              {timer.status === "running" ? (
+                <button type="button" className="pill-button is-solid" onClick={act.pause}>
+                  <Icon name="pause" />
+                  Pause
+                </button>
+              ) : (
+                <button type="button" className="pill-button is-solid" onClick={act.start}>
+                  <Icon name="play" />
+                  Resume
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+      <div className="presets" role="group" aria-label="Timer length">
+        {PRESETS_MIN.map((min) => (
+          <button
+            key={min}
+            type="button"
+            className={`preset${timer.durationMs === min * 60_000 ? " is-active" : ""}`}
+            disabled={!idle}
+            onClick={() => act.setDuration(min * 60_000)}
+          >
+            {min < 60 ? `${min} min` : "1 hour"}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StopwatchPane({ timers }: { timers: Timers }) {
+  const { stopwatch, now, stopwatchActions: act } = timers;
+  const elapsed = stopwatchElapsed(stopwatch, now);
+  const running = stopwatch.startedAt !== null;
+  const started = running || elapsed > 0;
+  // Newest first, each with its own length and the running total.
+  const laps = stopwatch.laps.map((at, i) => ({ n: i + 1, at, split: at - (stopwatch.laps[i - 1] ?? 0) })).reverse();
+  return (
+    <div className="timer-pane">
+      <div className="timer-main">
+        <div className="big-clock">{formatElapsed(elapsed, true)}</div>
+        <div className="timer-caption">{running ? "Running" : started ? "Paused" : "Start, then add laps as you go"}</div>
+        <div className="timer-controls">
+          {running ? (
+            <button type="button" className="pill-button" onClick={act.lap}>
+              Lap
+            </button>
+          ) : (
+            started && (
+              <button type="button" className="pill-button" onClick={act.reset}>
+                Reset
+              </button>
+            )
+          )}
+          {running ? (
+            <button type="button" className="pill-button is-solid" onClick={act.pause}>
+              <Icon name="pause" />
+              Pause
+            </button>
+          ) : (
+            <button type="button" className="pill-button is-solid" onClick={act.start}>
+              <Icon name="play" />
+              {started ? "Resume" : "Start"}
+            </button>
+          )}
+        </div>
+      </div>
+      {laps.length ? (
+        <ol className="laps" aria-label="Laps">
+          {laps.map((l) => (
+            <li key={l.n} className="lap">
+              <span className="lap-n">Lap {l.n}</span>
+              <span className="lap-split">{formatElapsed(l.split, true)}</span>
+              <span className="lap-at">{formatElapsed(l.at, true)}</span>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <div className="laps-empty">Laps show up here.</div>
+      )}
+    </div>
+  );
+}
+
+/** "5-minute", "1-hour", "1 h 30 min" (for captions and the "Time's up" card). */
+function describeDuration(ms: number) {
+  const min = Math.round(ms / 60_000);
+  if (min < 60) return `${min}-minute`;
+  if (min % 60 === 0) return `${min / 60}-hour`;
+  return `${Math.floor(min / 60)} h ${min % 60} min`;
 }
 
 // ---------- pieces ----------

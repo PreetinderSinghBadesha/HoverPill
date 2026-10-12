@@ -97,6 +97,11 @@ export async function recentNotificationApps(): Promise<string[]> {
   return inTauri ? invoke<string[]>("recent_notification_apps") : ["Discord", "WhatsApp", "Gmail"];
 }
 
+/** Every app Windows lets send notifications, whether or not it has sent one yet (empty on Linux). */
+export async function notifyingApps(): Promise<string[]> {
+  return inTauri ? invoke<string[]>("notifying_apps") : ["Brave", "Discord", "Google Chrome", "Slack", "WhatsApp"];
+}
+
 export async function mediaPlayers(): Promise<PlayerInfo[]> {
   return inTauri ? invoke<PlayerInfo[]>("media_players") : [{ id: "Spotify.exe", label: "Spotify" }, { id: "chrome", label: "Chrome" }];
 }

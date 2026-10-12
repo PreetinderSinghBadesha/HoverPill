@@ -5,13 +5,26 @@
 //! - Linux: a D-Bus *monitor* on `org.freedesktop.Notifications.Notify` calls. It observes
 //!   alongside the desktop's own notification daemon instead of replacing it.
 //!
-//! Only notifications that arrive after `spawn` are reported; the existing backlog isn't
-//! replayed.
+//! Only notifications that arrive after `spawn` are shown; the existing backlog is reported
+//! once as `Event::Seen` (which apps it's from) so settings can list those apps.
 
 #[cfg_attr(windows, path = "windows.rs")]
 #[cfg_attr(target_os = "linux", path = "linux.rs")]
 #[cfg_attr(not(any(windows, target_os = "linux")), path = "unsupported.rs")]
 mod backend;
+
+#[cfg(windows)]
+mod windows_apps;
+
+/// Apps the OS lets send notifications, by display name, whether or not they've sent one yet.
+/// Windows only (empty elsewhere: Linux has no registry of notification senders). Takes a
+/// few hundred milliseconds; call it off the UI thread.
+pub fn notifying_apps() -> Vec<String> {
+    #[cfg(windows)]
+    return windows_apps::notifying_apps();
+    #[cfg(not(windows))]
+    Vec::new()
+}
 
 /// App icons are small; anything bigger than this is dropped rather than sent to the UI.
 const MAX_ICON_BYTES: usize = 512 * 1024;
@@ -28,6 +41,8 @@ pub struct Notification {
 #[derive(Clone, Debug)]
 pub enum Event {
     Notification(Notification),
+    /// Apps with notifications already waiting when the listener started (not shown).
+    Seen(Vec<String>),
     /// The listener can't run (no permission, no session bus, ...). Sent at most once.
     Unavailable(String),
 }

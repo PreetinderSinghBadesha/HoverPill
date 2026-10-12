@@ -34,7 +34,6 @@ fn main() {
         .plugin(autostart::plugin())
         .manage(notch::HitState::default())
         .manage(events::Outbox::default())
-        .manage(RecentApps::default())
         .invoke_handler(tauri::generate_handler![
             notch::set_hit_rect,
             notch::list_monitors,
@@ -46,6 +45,7 @@ fn main() {
             settings::open_settings,
             settings::set_settings,
             settings::recent_notification_apps,
+            settings::notifying_apps,
             settings::media_players,
             autostart::get_autostart,
             autostart::set_autostart,
@@ -53,6 +53,7 @@ fn main() {
         .setup(|app| {
             // Placement, media and notifications all read settings, so load them first.
             app.manage(SettingsStore::load(app.handle())?);
+            app.manage(RecentApps::load(app.handle())?);
 
             let pill = app
                 .get_webview_window(notch::LABEL)
@@ -76,12 +77,14 @@ fn main() {
             let handle = app.handle().clone();
             hoverpill_notify::spawn(move |event| match event {
                 hoverpill_notify::Event::Notification(n) => {
-                    handle.state::<RecentApps>().record(&n.app);
+                    handle.state::<RecentApps>().record([n.app.as_str()]);
                     let settings = handle.state::<SettingsStore>().get();
                     if settings.notifications.enabled && !settings.is_app_blocked(&n.app) {
                         events::send(&handle, "pill:notification", events::NotificationItem::from(n));
                     }
                 }
+                // Already waiting when we started: not shown, but those apps belong in the list.
+                hoverpill_notify::Event::Seen(apps) => handle.state::<RecentApps>().record(apps.iter().map(String::as_str)),
                 hoverpill_notify::Event::Unavailable(reason) => events::notify(&handle, "Notifications unavailable", &reason),
             });
 

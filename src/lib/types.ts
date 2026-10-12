@@ -33,10 +33,11 @@ export type MediaState = {
 
 export type MediaAction = "play_pause" | "next" | "previous";
 
-export type View = "idle" | "media" | "expanded" | "notification" | "permission";
+/** `timer`: closed, nothing playing, timer or stopwatch running. `alarm`: the timer just ended. */
+export type View = "idle" | "media" | "timer" | "expanded" | "notification" | "permission" | "alarm";
 
 /** Tabs inside the open notch. */
-export type Tab = "home" | "media" | "notifications" | "claude";
+export type Tab = "home" | "media" | "timer" | "notifications" | "claude";
 
 export type ReceivedNotification = NotificationItem & { receivedAt: number };
 

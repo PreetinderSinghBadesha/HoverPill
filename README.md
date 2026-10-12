@@ -1,10 +1,23 @@
-# HoverPill
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/hoverpill-wordmark-dark.png">
+  <img src="assets/brand/hoverpill-wordmark-light.png" alt="HoverPill" width="390">
+</picture>
 
 HoverPill is a smart notch for Windows and Linux, styled after the iPhone's Dynamic Island. A black pill floats at the top-center of your primary monitor. It springs open when you hover over it, when Claude Code needs permission, when a notification arrives, or when media is playing. Everywhere else, clicks pass straight through to the windows underneath.
 
 Built with Tauri 2 (Rust), React, and Motion. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and the roadmap.
 
-## Run
+## Install
+
+```bash
+npm run tauri build
+```
+
+This produces `src-tauri/target/release/bundle/nsis/HoverPill_<version>_x64-setup.exe`, a 2 MB per-user installer. It needs no admin rights, adds HoverPill to the Start menu, and puts an uninstaller under Windows Settings › Apps. The release build uses about 40 MB of memory.
+
+While the installed HoverPill is running, `npm run tauri dev` can't start a second copy. Only one HoverPill runs at a time, so the dev build just opens the installed copy's Settings and exits. Quit the installed one from its tray icon first.
+
+## Run from source
 
 Prerequisites:
 
@@ -30,6 +43,7 @@ npm run tauri dev
 - **Inside the open notch,** tabs switch between:
   - **Home:** what's playing, the latest notification, and a calendar
   - **Media:** large cover art and controls
+  - **Timer:** a countdown (presets from 1 minute to 1 hour, ±1 minute) and a stopwatch with laps. While either runs, the closed notch shows the time. When a timer ends, a "Time's up" card drops down with a chime and +1 min / Done buttons, even over fullscreen apps.
   - **Notifications:** everything received this session
   - **Claude:** your recent permission decisions
 
@@ -43,7 +57,7 @@ The pill has no taskbar entry. Use the **tray icon** to open **Settings…**, to
 |---|---|
 | General | Start at login, version |
 | Display | Which monitor, distance from the top edge (0 = attached notch, more = floating pill), size (80–140%), open on rest, shrink when idle, hide during fullscreen, keep windows below the notch |
-| Notifications | On/off, how long each card stays (2–15 s), per-app on/off for apps that have sent notifications |
+| Notifications | On/off, how long each card stays (2–15 s), per-app on/off: apps that recently sent notifications, plus every other app Windows lets notify |
 | Media | On/off, per-player on/off (e.g. hide a browser so the pill shows Spotify) |
 
 Settings are stored in `settings.json` in the app's config folder (`%APPDATA%\dev.hoverpill.app` on Windows, `~/.config/dev.hoverpill.app` on Linux).
@@ -65,7 +79,9 @@ Notifications from other apps (Discord, WhatsApp, Gmail in your browser, ...) dr
 - **Windows:** to stop the normal Windows banners from appearing as well, open Settings › System › Notifications, pick each app, and turn off **Show notification banners**. Keep the app's notifications themselves on: HoverPill reads them from Notification Center.
 - **Linux:** turn on your desktop's Do Not Disturb.
 
-To see what the listener picks up:
+**Gmail and other websites** notify through your browser, so Windows reports them as the browser (e.g. Brave), and they're listed under it. The notification API doesn't expose which site sent them. To give Gmail its own entry, install it as an app from the browser's menu.
+
+To see what the listener picks up (and which apps Windows lets notify):
 
 ```bash
 cargo run --manifest-path src-tauri/Cargo.toml -p hoverpill-notify --example listen 60

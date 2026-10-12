@@ -93,7 +93,7 @@ function reducer(state: State, action: Action): State {
 function savedTab(): Tab {
   try {
     const t = localStorage.getItem(TAB_KEY);
-    if (t === "home" || t === "media" || t === "notifications" || t === "claude") return t;
+    if (t === "home" || t === "media" || t === "timer" || t === "notifications" || t === "claude") return t;
   } catch {
     // Storage can be unavailable; Home is fine.
   }
@@ -114,14 +114,16 @@ const initial = (): State => ({
 });
 
 /**
- * Priority: a Claude request you must answer, then the open notch, then a notification card,
- * then what's playing.
+ * Priority: things waiting on you (a Claude request, then a finished timer), then the open
+ * notch, then a notification card, then what's playing, then a running timer or stopwatch.
  */
-export function pickView(s: State): View {
+export function pickView(s: State, timers: { ringing: boolean; ticking: boolean }): View {
   if (s.permissions.length) return "permission";
+  if (timers.ringing) return "alarm";
   if (s.open) return "expanded";
   if (s.queue.length) return "notification";
   if (s.media) return "media";
+  if (timers.ticking) return "timer";
   return "idle";
 }
 
@@ -188,5 +190,5 @@ export function usePillState(notificationMs: number) {
     return () => window.removeEventListener("keydown", onKey);
   }, [state.media, state.open]);
 
-  return { state, view: pickView(state), dispatch, setOpen };
+  return { state, dispatch, setOpen };
 }

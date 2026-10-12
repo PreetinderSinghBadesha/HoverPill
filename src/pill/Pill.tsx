@@ -1,11 +1,12 @@
 import { useLayoutEffect, useRef, type CSSProperties } from "react";
 import { AnimatePresence, motion, type Transition } from "motion/react";
 import { inTauri, mediaCommand, openSettings, resolvePermission, setHitRect } from "../lib/bridge";
-import { usePillState } from "../lib/usePillState";
+import { pickView, usePillState } from "../lib/usePillState";
+import { formatCountdown, formatElapsed, stopwatchElapsed, timerLeft, useTimers } from "../lib/useTimers";
 import { useLiveSettings } from "../lib/useSettings";
 import { useArtworkColor } from "../lib/useArtworkColor";
 import type { View } from "../lib/types";
-import { ExpandedView, IdleView, MediaCompactView, NotificationView, PermissionView } from "./views";
+import { AlarmView, ExpandedView, IdleView, MediaCompactView, NotificationView, PermissionView, TimerCompactView } from "./views";
 
 /**
  * Target size per view, in CSS px. The window is fixed (see notch.rs); only the notch morphs.
@@ -16,6 +17,8 @@ type Size = { width: number; height: number; radius: number };
 const SIZES: Record<View, Size> = {
   idle: { width: 190, height: 30, radius: 12 },
   media: { width: 300, height: 32, radius: 14 },
+  timer: { width: 210, height: 32, radius: 14 },
+  alarm: { width: 440, height: 78, radius: 24 },
   notification: { width: 420, height: 78, radius: 24 },
   permission: { width: 520, height: 204, radius: 26 },
   expanded: { width: 680, height: 300, radius: 30 },
@@ -35,14 +38,25 @@ export function Pill() {
   const { scale, topOffset } = settings.display;
   const attached = topOffset === 0;
   const durationMs = settings.notifications.durationSecs * 1000;
-  const { state, view, dispatch, setOpen } = usePillState(durationMs);
+  const { state, dispatch, setOpen } = usePillState(durationMs);
+  const timers = useTimers();
+  const { timer, stopwatch, now } = timers;
+  const ringing = timer.status === "done";
+  // What the closed notch shows ticking: the countdown wins over the stopwatch.
+  const clock =
+    timer.status === "running" || timer.status === "paused"
+      ? formatCountdown(timerLeft(timer, now))
+      : stopwatch.startedAt !== null
+        ? formatElapsed(stopwatchElapsed(stopwatch, now))
+        : null;
+  const view = pickView(state, { ringing, ticking: clock !== null });
   const accent = useArtworkColor(state.media?.artwork);
   const ref = useRef<HTMLDivElement>(null);
   const size = view === "idle" && settings.display.compactIdle ? IDLE_BAR : SIZES[view];
-  // Behind a fullscreen app only a Claude request (which is waiting on you) still shows.
-  const hidden = state.fullscreen && view !== "permission";
+  // Behind a fullscreen app only what's waiting on you (a Claude request, a finished timer) shows.
+  const hidden = state.fullscreen && view !== "permission" && view !== "alarm";
   // Closed (and a passing notification) never takes clicks, so browser tabs underneath stay usable.
-  const interactive = !hidden && (view === "expanded" || view === "permission");
+  const interactive = !hidden && (view === "expanded" || view === "permission" || view === "alarm");
   // Pointing at the closed notch fades it, unless resting is how you open it.
   const faded = state.peek && !interactive && !settings.display.openOnHover;
 
@@ -111,7 +125,9 @@ export function Pill() {
                 exit={{ opacity: 0, filter: "blur(4px)", transition: { duration: 0.1 } }}
               >
                 {view === "idle" && <IdleView />}
-                {view === "media" && state.media && <MediaCompactView media={state.media} />}
+                {view === "media" && state.media && <MediaCompactView media={state.media} clock={clock} />}
+                {view === "timer" && clock && <TimerCompactView clock={clock} />}
+                {view === "alarm" && <AlarmView durationMs={timer.durationMs} onSnooze={timers.timerActions.snooze} onDone={timers.timerActions.reset} />}
                 {view === "notification" && notification && <NotificationView item={notification} durationMs={durationMs} />}
                 {view === "permission" && permission && (
                   <PermissionView
@@ -138,6 +154,7 @@ export function Pill() {
                     unseen={state.unseen}
                     onClearHistory={() => dispatch({ type: "clearHistory" })}
                     decisions={state.decisions}
+                    timers={timers}
                     onSettings={openSettings}
                   />
                 )}

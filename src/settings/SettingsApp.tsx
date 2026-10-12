@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import { getAutostart, inTauri, listMonitors, mediaPlayers, recentNotificationApps, setAutostart } from "../lib/bridge";
+import { getAutostart, inTauri, listMonitors, mediaPlayers, notifyingApps, recentNotificationApps, setAutostart } from "../lib/bridge";
 import { useEditableSettings } from "../lib/useSettings";
 import { DEFAULT_SETTINGS, RANGES, type MonitorInfo, type PlayerInfo, type Settings } from "../lib/types";
 import { Section, SelectRow, SliderRow, SwitchRow, ToggleList } from "./controls";
+import mark from "../../assets/brand/hoverpill-icon.svg";
 
 type Update = (change: (s: Settings) => Settings, debounceMs?: number) => void;
 
@@ -58,7 +59,7 @@ export function SettingsApp() {
     <div className="app">
       <header className="header">
         <div className="brand">
-          <span className="brand-pill" aria-hidden />
+          <img className="brand-mark" src={mark} alt="" width={28} height={28} />
           HoverPill
         </div>
         <div className="tabs" role="tablist" aria-label="Settings sections" onKeyDown={onTabKey}>
@@ -256,9 +257,20 @@ function DisplayTab({ settings, update }: { settings: Settings; update: Update }
 
 function NotificationsTab({ settings, update }: { settings: Settings; update: Update }) {
   const recent = usePolled(recentNotificationApps, [] as string[]);
+  const [installed, setInstalled] = useState<string[] | null>(null);
+  useEffect(() => {
+    notifyingApps().then(setInstalled, () => setInstalled([]));
+  }, []);
+
   const n = settings.notifications;
-  const blocked = (app: string) => n.blockedApps.some((b) => b.toLowerCase() === app.toLowerCase());
-  const apps = [...recent, ...n.blockedApps.filter((b) => !recent.some((r) => r.toLowerCase() === b.toLowerCase()))];
+  const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+  const blocked = (app: string) => n.blockedApps.some((b) => same(b, app));
+  // Blocked apps stay listed even if they've gone quiet, so they can be turned back on.
+  const recentApps = [...recent, ...n.blockedApps.filter((b) => !recent.some((r) => same(r, b)) && !installed?.some((i) => same(i, b)))];
+  const otherApps = (installed ?? []).filter((app) => !recentApps.some((r) => same(r, app)));
+  const toItems = (apps: string[]) => apps.map((app) => ({ key: app, label: app, on: !blocked(app) }));
+  const toggle = (app: string, on: boolean) =>
+    setNotifications({ blockedApps: on ? n.blockedApps.filter((b) => !same(b, app)) : [...n.blockedApps, app] });
 
   const setNotifications = (patch: Partial<Settings["notifications"]>, debounceMs = 0) =>
     update((s) => ({ ...s, notifications: { ...s.notifications, ...patch } }), debounceMs);
@@ -281,17 +293,26 @@ function NotificationsTab({ settings, update }: { settings: Settings; update: Up
           onChange={(durationSecs) => setNotifications({ durationSecs }, 150)}
         />
       </Section>
-      <Section title="Apps">
+      <Section title="Recently sent notifications">
         <ToggleList
-          items={apps.map((app) => ({ key: app, label: app, on: !blocked(app), note: recent.includes(app) ? undefined : "not seen recently" }))}
-          empty={<>Apps show up here after they send a notification. Turn one off to stop it from reaching the pill.</>}
-          onToggle={(app, on) =>
-            setNotifications({
-              blockedApps: on ? n.blockedApps.filter((b) => b.toLowerCase() !== app.toLowerCase()) : [...n.blockedApps, app],
-            })
-          }
+          items={toItems(recentApps)}
+          empty={<>Apps show up here after they send a notification. Turn one off to keep it out of the pill.</>}
+          onToggle={toggle}
         />
       </Section>
+      {installed === null ? (
+        <Note>Looking up the other apps on this PC that can send notifications…</Note>
+      ) : (
+        otherApps.length > 0 && (
+          <Section title="Other apps that can send notifications">
+            <ToggleList items={toItems(otherApps)} empty={null} onToggle={toggle} />
+          </Section>
+        )
+      )}
+      <Note>
+        Gmail and other websites send notifications through your browser, so they're listed under the browser (for example
+        Brave). To give a site its own entry, install it as an app from the browser's menu, then it notifies under its own name.
+      </Note>
       {!n.enabled && <Note>Notifications are off, so these app choices have no effect right now.</Note>}
     </>
   );

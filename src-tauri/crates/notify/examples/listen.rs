@@ -17,8 +17,10 @@ fn main() {
             n.body,
             n.icon.as_ref().map_or("none".into(), |i| format!("{} chars", i.len()))
         ),
+        Event::Seen(apps) => println!("already waiting in Notification Center, from: {}", apps.join(", ")),
         Event::Unavailable(reason) => println!("unavailable: {reason}"),
     });
+    println!("apps allowed to notify: {}", hoverpill_notify::notifying_apps().join(", "));
     println!("listening for {secs}s...");
     std::thread::sleep(Duration::from_secs(secs));
 }

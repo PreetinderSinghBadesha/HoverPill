@@ -14,6 +14,10 @@ const PATHS = {
   chevronLeft: "M14.5 6 8.5 12l6 6",
   chevronRight: "M9.5 6l6 6-6 6",
   terminal: "M5 7l4 4-4 4M11 16h7",
+  // A stopwatch: face, crown, and a hand.
+  timer: "M12 21a7.5 7.5 0 1 0 0-15 7.5 7.5 0 0 0 0 15ZM12 9.5v4l2.5 1.6M10 2.75h4M18.2 6.3l1.3-1.3",
+  plus: "M12 6v12M6 12h12",
+  minus: "M6 12h12",
 } as const;
 
 export type IconName = keyof typeof PATHS;

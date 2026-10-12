@@ -15,8 +15,8 @@
         "label": "pill",
         "title": "HoverPill",
         "url": "index.html",
-        "width": 560,
-        "height": 240,
+        "width": 720,
+        "height": 340,
         "transparent": true,
         "decorations": false,
         "shadow": false,
@@ -36,7 +36,18 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
+    "publisher": "preetindersinghbadesha",
+    "copyright": "© 2026 preetindersinghbadesha",
+    "category": "Utility",
+    "shortDescription": "A Dynamic Island-style notch for Windows and Linux",
+    "longDescription": "HoverPill puts a notch at the top of your screen that shows what's playing, mirrors your notifications and lets you answer Claude Code permission requests.",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

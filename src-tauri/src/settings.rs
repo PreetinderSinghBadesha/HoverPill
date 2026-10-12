@@ -209,25 +209,57 @@ pub fn open_window(app: &AppHandle) {
     });
 }
 
-/// Apps seen in notifications recently (blocked ones too), newest first, so the Settings window
-/// can offer them for blocking without anyone typing names.
-#[derive(Default)]
-pub struct RecentApps(Mutex<Vec<String>>);
+/// Apps seen sending notifications (blocked ones too), newest first, so the Settings window
+/// can offer them for blocking without anyone typing names. Saved, so the list survives
+/// restarts.
+pub struct RecentApps {
+    path: PathBuf,
+    list: Mutex<Vec<String>>,
+}
 
-const RECENT_APPS_MAX: usize = 30;
+const RECENT_APPS_MAX: usize = 40;
 
 impl RecentApps {
-    pub fn record(&self, app: &str) {
-        let mut list = self.0.lock().unwrap();
-        list.retain(|a| !a.eq_ignore_ascii_case(app));
-        list.insert(0, app.to_string());
+    pub fn load(app: &AppHandle) -> Result<Self, Box<dyn std::error::Error>> {
+        let path = app.path().app_config_dir()?.join("seen-apps.json");
+        let list = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+        Ok(Self { path, list: Mutex::new(list) })
+    }
+
+    /// Moves `apps` to the front. Saves only when an app is new, so ordinary traffic from known
+    /// apps doesn't write to disk.
+    pub fn record<'a>(&self, apps: impl IntoIterator<Item = &'a str>) {
+        let mut list = self.list.lock().unwrap();
+        let mut new_app = false;
+        for app in apps.into_iter().map(str::trim).filter(|a| !a.is_empty()) {
+            let before = list.len();
+            list.retain(|a| !a.eq_ignore_ascii_case(app));
+            new_app |= list.len() == before;
+            list.insert(0, app.to_string());
+        }
         list.truncate(RECENT_APPS_MAX);
+        if new_app {
+            if let Some(dir) = self.path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            if let Err(e) = std::fs::write(&self.path, serde_json::to_string(&*list).unwrap_or_default()) {
+                eprintln!("hoverpill: can't save {}: {e}", self.path.display());
+            }
+        }
     }
 }
 
 #[tauri::command]
 pub fn recent_notification_apps(recent: State<RecentApps>) -> Vec<String> {
-    recent.0.lock().unwrap().clone()
+    recent.list.lock().unwrap().clone()
+}
+
+/// Every app the OS lets send notifications (Windows; empty on Linux), for apps that haven't
+/// sent one since HoverPill started. Reading the Start menu takes a moment, so it runs on a
+/// worker thread.
+#[tauri::command]
+pub async fn notifying_apps() -> Vec<String> {
+    tauri::async_runtime::spawn_blocking(hoverpill_notify::notifying_apps).await.unwrap_or_default()
 }
 
 #[derive(Serialize)]

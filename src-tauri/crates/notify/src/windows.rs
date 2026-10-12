@@ -73,6 +73,12 @@ pub fn run(on_event: &dyn Fn(Event)) -> Result<(), String> {
                     if let Some((max, _)) = list.last() {
                         next = Some(next.map_or(max + 1, |nx| nx.max(max + 1)));
                     }
+                    if first_sync {
+                        let mut apps: Vec<String> = list.iter().filter_map(|(_, n)| app_name(n)).collect();
+                        apps.sort();
+                        apps.dedup();
+                        on_event(Event::Seen(apps));
+                    }
                     first_sync = false;
                 }
                 Err(e) => eprintln!("hoverpill-notify: full read failed: {e}"),
@@ -98,6 +104,10 @@ fn all_toasts(listener: &UserNotificationListener) -> Result<Vec<(u32, UserNotif
     let list = listener.GetNotificationsAsync(NotificationKinds::Toast).and_then(|op| op.join()).map_err(err)?;
     let len = list.Size().map_err(err)?;
     Ok((0..len).filter_map(|i| list.GetAt(i).ok()).filter_map(|n| Some((n.Id().ok()?, n))).collect())
+}
+
+fn app_name(n: &UserNotification) -> Option<String> {
+    Some(n.AppInfo().ok()?.DisplayInfo().ok()?.DisplayName().ok()?.to_string_lossy())
 }
 
 fn parse(n: &UserNotification) -> Option<Notification> {
