@@ -1,4 +1,4 @@
-﻿//! Claude Code permission broker.
+//! Claude Code permission broker.
 //!
 //! Claude Code's `PermissionRequest` hook is configured as an `http` hook that POSTs to
 //! `127.0.0.1:47823/claude/permission` (see `install.rs`). Each request becomes a card in the

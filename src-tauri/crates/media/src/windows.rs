@@ -2,6 +2,8 @@
 //! Every app that integrates with the Windows media flyout (Spotify, browsers, VLC, Groove, ...)
 //! shows up here as a session.
 
+use std::collections::HashSet;
+
 use windows::core::Interface;
 use windows::Foundation::TypedEventHandler;
 use windows::Media::Control::{
@@ -14,7 +16,7 @@ use windows::Storage::Streams::DataReader;
 use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
 use windows_future::IAsyncOperation;
 
-use crate::{data_url, Action, ArtCache, NowPlaying, Notify, MAX_ARTWORK_BYTES};
+use crate::{data_url, Action, ArtCache, NowPlaying, Notify, Source, MAX_ARTWORK_BYTES};
 
 /// The session we're showing, with the tokens needed to unsubscribe from it.
 struct Watched {
@@ -45,13 +47,28 @@ impl Backend {
         Ok(Self { manager, notify, watched: None, art: ArtCache::default() })
     }
 
-    /// A session that is actually playing wins; otherwise whatever Windows considers current.
-    fn pick(&self) -> Option<Session> {
-        let sessions = self.manager.GetSessions().ok()?;
-        let playing = (0..sessions.Size().ok()?)
-            .filter_map(|i| sessions.GetAt(i).ok())
-            .find(|s| status(s) == Some(Status::Playing));
-        playing.or_else(|| self.manager.GetCurrentSession().ok())
+    /// Among sessions that aren't ignored: one that's actually playing wins; then whatever
+    /// Windows considers current; then any. Also returns every session's source.
+    fn pick(&self, ignored: &HashSet<String>) -> (Option<Session>, Vec<Source>) {
+        let sessions: Vec<Session> = self
+            .manager
+            .GetSessions()
+            .ok()
+            .map(|list| (0..list.Size().unwrap_or(0)).filter_map(|i| list.GetAt(i).ok()).collect())
+            .unwrap_or_default();
+        let mut sources: Vec<Source> = sessions.iter().filter_map(source_id).map(Source::new).collect();
+        sources.sort();
+        sources.dedup();
+
+        let allowed = |s: &Session| source_id(s).is_none_or(|id| !ignored.contains(&id));
+        let candidates: Vec<&Session> = sessions.iter().filter(|s| allowed(s)).collect();
+        let picked = candidates
+            .iter()
+            .find(|s| status(s) == Some(Status::Playing))
+            .map(|s| (*s).clone())
+            .or_else(|| self.manager.GetCurrentSession().ok().filter(|s| allowed(s)))
+            .or_else(|| candidates.first().map(|s| (*s).clone()));
+        (picked, sources)
     }
 
     /// Subscribes to change events on `session`, dropping the previous subscription.
@@ -73,29 +90,30 @@ impl Backend {
         }
     }
 
-    pub fn read(&mut self) -> Result<Option<NowPlaying>, String> {
-        let session = self.pick();
+    pub fn read(&mut self, ignored: &HashSet<String>) -> Result<(Option<NowPlaying>, Vec<Source>), String> {
+        let (session, sources) = self.pick(ignored);
         self.watch(session.as_ref());
-        let Some(session) = session else { return Ok(None) };
+        let Some(session) = session else { return Ok((None, sources)) };
 
         let playing = match status(&session) {
             Some(Status::Playing) => true,
             Some(Status::Paused | Status::Changing) => false,
-            _ => return Ok(None), // stopped / closed / opened-but-idle
+            _ => return Ok((None, sources)), // stopped / closed / opened-but-idle
         };
         let props = session.TryGetMediaPropertiesAsync().and_then(|op| op.join()).map_err(err)?;
         let title = props.Title().map_err(err)?.to_string_lossy();
         if title.is_empty() {
-            return Ok(None); // e.g. a browser tab that registered a session without metadata
+            return Ok((None, sources)); // e.g. a browser tab that registered a session without metadata
         }
         let artist = props.Artist().map_err(err)?.to_string_lossy();
         let artwork = self.art.get_or(&title, &artist, || thumbnail(&props));
-        Ok(Some(NowPlaying { title, artist, playing, artwork }))
+        let source = source_id(&session).unwrap_or_default();
+        Ok((Some(NowPlaying { title, artist, playing, artwork, source }), sources))
     }
 
     pub fn command(&mut self, action: Action) -> Result<(), String> {
-        // Act on the session the pill is showing, not whatever `pick` would choose right now.
-        let Some(session) = self.watched.as_ref().map(|w| w.session.clone()).or_else(|| self.pick()) else {
+        // Act on the session the pill is showing, not whatever would be picked right now.
+        let Some(session) = self.watched.as_ref().map(|w| w.session.clone()) else {
             return Ok(());
         };
         let op = match action {
@@ -105,6 +123,10 @@ impl Backend {
         };
         op.and_then(|op| op.join()).map(drop).map_err(err)
     }
+}
+
+fn source_id(session: &Session) -> Option<String> {
+    session.SourceAppUserModelId().ok().map(|id| id.to_string_lossy()).filter(|id| !id.is_empty())
 }
 
 fn status(session: &Session) -> Option<Status> {

@@ -1,7 +1,7 @@
 //! MPRIS: every player that owns an `org.mpris.MediaPlayer2.*` name on the session bus
 //! (Spotify, Firefox, Chromium, VLC, mpv with mpv-mpris, ...).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use zbus::blocking::fdo::DBusProxy;
 use zbus::blocking::{Connection, MessageIterator, Proxy};
@@ -9,7 +9,7 @@ use zbus::message::Type as MessageType;
 use zbus::zvariant::{Array, OwnedValue};
 use zbus::MatchRule;
 
-use crate::{data_url, Action, ArtCache, NowPlaying, Notify, MAX_ARTWORK_BYTES};
+use crate::{data_url, Action, ArtCache, NowPlaying, Notify, Source, MAX_ARTWORK_BYTES};
 
 const BUS_PREFIX: &str = "org.mpris.MediaPlayer2.";
 const OBJECT_PATH: &str = "/org/mpris/MediaPlayer2";
@@ -58,39 +58,48 @@ impl Backend {
         self.player(bus_name).ok()?.get_property::<String>("PlaybackStatus").ok()
     }
 
-    /// A playing player wins; then the one already shown if it's merely paused; then any
-    /// paused one. Stopped players aren't shown.
-    fn pick(&self) -> Result<Option<(String, bool)>, String> {
+    /// Among players that aren't ignored: a playing one wins; then the one already shown if
+    /// it's merely paused; then any paused one. Stopped players aren't shown. Also returns
+    /// every player's source.
+    fn pick(&self, ignored: &HashSet<String>) -> Result<(Option<(String, bool)>, Vec<Source>), String> {
         let names = DBusProxy::new(&self.conn).map_err(err)?.list_names().map_err(|e| e.to_string())?;
         let players: Vec<String> =
             names.iter().map(|n| n.as_str().to_string()).filter(|n| n.starts_with(BUS_PREFIX)).collect();
-        let statuses: Vec<(String, String)> =
-            players.into_iter().filter_map(|n| self.status(&n).map(|s| (n, s))).collect();
+        let mut sources: Vec<Source> = players.iter().map(|n| Source::new(source_id(n))).collect();
+        sources.sort();
+        sources.dedup();
+
+        let statuses: Vec<(String, String)> = players
+            .into_iter()
+            .filter(|n| !ignored.contains(&source_id(n)))
+            .filter_map(|n| self.status(&n).map(|s| (n, s)))
+            .collect();
 
         if let Some((name, _)) = statuses.iter().find(|(_, s)| s == "Playing") {
-            return Ok(Some((name.clone(), true)));
+            return Ok((Some((name.clone(), true)), sources));
         }
         let paused = |name: &String| statuses.iter().any(|(n, s)| n == name && s == "Paused");
         if let Some(cur) = self.current.as_ref().filter(|c| paused(c)) {
-            return Ok(Some((cur.clone(), false)));
+            return Ok((Some((cur.clone(), false)), sources));
         }
-        Ok(statuses.into_iter().find(|(_, s)| s == "Paused").map(|(n, _)| (n, false)))
+        Ok((statuses.into_iter().find(|(_, s)| s == "Paused").map(|(n, _)| (n, false)), sources))
     }
 
-    pub fn read(&mut self) -> Result<Option<NowPlaying>, String> {
-        let picked = self.pick()?;
+    pub fn read(&mut self, ignored: &HashSet<String>) -> Result<(Option<NowPlaying>, Vec<Source>), String> {
+        let (picked, sources) = self.pick(ignored)?;
         self.current = picked.as_ref().map(|(n, _)| n.clone());
-        let Some((name, playing)) = picked else { return Ok(None) };
+        let Some((name, playing)) = picked else { return Ok((None, sources)) };
 
         let meta: Metadata = self.player(&name)?.get_property("Metadata").map_err(|e| e.to_string())?;
         let title = meta_str(&meta, "xesam:title").unwrap_or_default();
         if title.is_empty() {
-            return Ok(None);
+            return Ok((None, sources));
         }
         let artist = meta_artists(&meta).join(", ");
         let art_url = meta_str(&meta, "mpris:artUrl");
         let artwork = self.art.get_or(&title, &artist, || art_url.as_deref().and_then(artwork_from_url));
-        Ok(Some(NowPlaying { title, artist, playing, artwork }))
+        let source = source_id(&name);
+        Ok((Some(NowPlaying { title, artist, playing, artwork, source }), sources))
     }
 
     pub fn command(&mut self, action: Action) -> Result<(), String> {
@@ -101,6 +110,16 @@ impl Backend {
             Action::Previous => "Previous",
         };
         self.player(&name)?.call_method(method, &()).map(drop).map_err(err)
+    }
+}
+
+/// `org.mpris.MediaPlayer2.firefox.instance_1234` → `firefox`: the instance suffix changes on
+/// every launch, so it can't be part of an id the user's settings remember.
+fn source_id(bus_name: &str) -> String {
+    let rest = bus_name.strip_prefix(BUS_PREFIX).unwrap_or(bus_name);
+    match rest.find(".instance") {
+        Some(i) => rest[..i].to_string(),
+        None => rest.to_string(),
     }
 }
 
@@ -176,6 +195,12 @@ mod tests {
     fn decodes_file_urls() {
         assert_eq!(percent_decode("/home/me/My%20Music/cover%2B1.jpg"), "/home/me/My Music/cover+1.jpg");
         assert_eq!(percent_decode("/bad%zz"), "/bad%zz");
+    }
+
+    #[test]
+    fn source_id_drops_instance_suffix() {
+        assert_eq!(source_id("org.mpris.MediaPlayer2.firefox.instance_4521"), "firefox");
+        assert_eq!(source_id("org.mpris.MediaPlayer2.spotify"), "spotify");
     }
 
     #[test]

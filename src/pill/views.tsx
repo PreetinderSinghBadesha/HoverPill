@@ -1,65 +1,49 @@
-import { motion } from "motion/react";
-import { useEffect, useState } from "react";
-import type { Decision, MediaAction, MediaState, NotificationItem, PermissionRequest } from "../lib/types";
+import { AnimatePresence, motion } from "motion/react";
+import { useEffect, useState, type ReactNode } from "react";
+import type {
+  Decision,
+  MediaAction,
+  MediaState,
+  NotificationItem,
+  PastDecision,
+  PermissionRequest,
+  ReceivedNotification,
+  Tab,
+} from "../lib/types";
+import { Icon, type IconName } from "./icons";
+
+// ---------- closed ----------
 
 export function IdleView() {
   return <div className="idle" />;
 }
 
+/** Closed with something playing: the cover on the left, its colour bleeding into the black. */
 export function MediaCompactView({ media }: { media: MediaState }) {
   return (
-    <div className="row compact">
-      <Artwork media={media} size={20} />
-      <div className="marquee">
-        <span>
-          {media.title} · {media.artist}
-        </span>
-      </div>
+    <div className="compact">
+      <Artwork media={media} className="compact-art" />
       <Visualizer playing={media.playing} />
     </div>
   );
 }
 
-export function ExpandedView({ media, onCommand }: { media: MediaState | null; onCommand: (a: MediaAction) => void }) {
-  if (!media) return <Clock />;
-  return (
-    <div className="row expanded">
-      <Artwork media={media} size={64} />
-      <div className="meta">
-        <div className="title">{media.title}</div>
-        <div className="subtitle">{media.artist}</div>
-        <div className="controls">
-          <IconButton label="Previous" onClick={() => onCommand("previous")} d="M6 6h2v12H6zM9.5 12 18 6v12z" />
-          <IconButton
-            label={media.playing ? "Pause" : "Play"}
-            big
-            onClick={() => onCommand("play_pause")}
-            d={media.playing ? "M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" : "M8 5v14l11-7z"}
-          />
-          <IconButton label="Next" onClick={() => onCommand("next")} d="M16 6h2v12h-2zM6 18l8.5-6L6 6z" />
-        </div>
-      </div>
-      <Visualizer playing={media.playing} />
-    </div>
-  );
-}
+// ---------- cards that drop down by themselves ----------
 
-export function NotificationView({ item, paused, onDismiss }: { item: NotificationItem; paused: boolean; onDismiss: () => void }) {
+export function NotificationView({ item, durationMs }: { item: NotificationItem; durationMs: number }) {
   return (
-    <div className="row notification" onClick={onDismiss}>
-      <AppIcon item={item} />
-      <div className="meta">
-        <div className="eyebrow">{item.app}</div>
-        <div className="title">{item.title}</div>
-        <div className="subtitle ellipsis">{item.body}</div>
+    <div className="card-notification">
+      <AppIcon app={item.app} icon={item.icon} className="card-icon" />
+      <div className="card-text">
+        <div className="card-app">{item.app}</div>
+        <div className="card-title">{item.title}</div>
+        {item.body && <div className="card-body">{item.body}</div>}
       </div>
-      {/* Keyed on `paused` so the bar restarts when hover releases, matching the dismiss timer. */}
       <motion.div
-        key={String(paused)}
-        className="timer"
+        className="card-timer"
         initial={{ scaleX: 1 }}
-        animate={{ scaleX: paused ? 1 : 0 }}
-        transition={{ duration: paused ? 0 : 4.5, ease: "linear" }}
+        animate={{ scaleX: 0 }}
+        transition={{ duration: durationMs / 1000, ease: "linear" }}
       />
     </div>
   );
@@ -67,25 +51,26 @@ export function NotificationView({ item, paused, onDismiss }: { item: Notificati
 
 export function PermissionView({ request, queued, onDecide }: { request: PermissionRequest; queued: number; onDecide: (d: Decision) => void }) {
   return (
-    <div className="permission">
+    <div className="card-permission">
       <div className="perm-header">
-        <span className="claude-mark">✻</span>
+        <Icon name="spark" className="perm-mark" />
         <span>Claude Code wants to use</span>
-        <span className="chip">{request.tool}</span>
-        {queued > 0 && <span className="queued">+{queued} more</span>}
+        <span className="tool-chip">{request.tool}</span>
+        {queued > 0 && <span className="perm-queued">{queued} more waiting</span>}
       </div>
-      <pre className="command">{request.command}</pre>
+      <pre className="perm-command">{request.command}</pre>
       <div className="perm-footer">
-        <span className="cwd ellipsis">{request.cwd}</span>
-        <button className="link" onClick={() => onDecide("ask")}>
+        <span className="perm-cwd">{request.cwd}</span>
+        <button type="button" className="text-button" onClick={() => onDecide("ask")}>
+          <Icon name="terminal" />
           Answer in terminal
         </button>
       </div>
-      <div className="actions">
-        <button className="btn deny" onClick={() => onDecide("deny")}>
+      <div className="perm-actions">
+        <button type="button" className="btn btn-quiet" onClick={() => onDecide("deny")}>
           Deny
         </button>
-        <button className="btn approve" onClick={() => onDecide("allow")}>
+        <button type="button" className="btn btn-solid" onClick={() => onDecide("allow")}>
           Approve
         </button>
       </div>
@@ -93,55 +78,326 @@ export function PermissionView({ request, queued, onDecide }: { request: Permiss
   );
 }
 
-function Artwork({ media, size }: { media: MediaState; size: number }) {
-  return media.artwork ? (
-    <img className="artwork" src={media.artwork} width={size} height={size} alt="" />
-  ) : (
-    <div className="artwork placeholder" style={{ width: size, height: size }} />
-  );
-}
+// ---------- open: tab bar + tabs ----------
 
-function AppIcon({ item }: { item: NotificationItem }) {
-  if (item.icon) return <img className="app-icon" src={item.icon} alt="" />;
-  const hue = [...item.app].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 0);
+const TABS: { id: Tab; label: string; icon: IconName }[] = [
+  { id: "home", label: "Home", icon: "home" },
+  { id: "media", label: "Media", icon: "music" },
+  { id: "notifications", label: "Notifications", icon: "bell" },
+  { id: "claude", label: "Claude", icon: "spark" },
+];
+
+export type ExpandedProps = {
+  tab: Tab;
+  onTab: (t: Tab) => void;
+  media: MediaState | null;
+  onMedia: (a: MediaAction) => void;
+  history: ReceivedNotification[];
+  unseen: number;
+  onClearHistory: () => void;
+  decisions: PastDecision[];
+  onSettings: () => void;
+};
+
+export function ExpandedView(props: ExpandedProps) {
+  const now = useNow(15_000);
   return (
-    <div className="app-icon" style={{ background: `hsl(${hue} 65% 52%)` }}>
-      {item.app.charAt(0).toUpperCase()}
+    <div className="expanded">
+      <div className="topbar">
+        <div className="tabs" role="tablist" aria-label="Notch sections">
+          {TABS.map((t) => {
+            const active = t.id === props.tab;
+            const badge = t.id === "notifications" && props.unseen > 0 ? props.unseen : 0;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                aria-label={t.label}
+                className={`tab${active ? " is-active" : ""}`}
+                onClick={() => props.onTab(t.id)}
+              >
+                <Icon name={t.icon} />
+                {active && <span className="tab-label">{t.label}</span>}
+                {badge > 0 && <span className="tab-badge">{badge > 9 ? "9+" : badge}</span>}
+              </button>
+            );
+          })}
+        </div>
+        <div className="topbar-end">
+          <span className="clock">{now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+          <button type="button" className="round-button" aria-label="Open settings" title="Settings" onClick={props.onSettings}>
+            <Icon name="gear" />
+          </button>
+        </div>
+      </div>
+
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.div
+          key={props.tab}
+          className="tab-panel"
+          role="tabpanel"
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0, transition: { duration: 0.16 } }}
+          exit={{ opacity: 0, transition: { duration: 0.08 } }}
+        >
+          {props.tab === "home" && <HomeTab {...props} now={now} />}
+          {props.tab === "media" && <MediaTab media={props.media} onMedia={props.onMedia} />}
+          {props.tab === "notifications" && <NotificationsTab history={props.history} onClear={props.onClearHistory} now={now} />}
+          {props.tab === "claude" && <ClaudeTab decisions={props.decisions} now={now} />}
+        </motion.div>
+      </AnimatePresence>
     </div>
   );
 }
 
-/** Decorative bars. Real levels would need loopback audio capture; see docs/ARCHITECTURE.md. */
+function HomeTab({ media, onMedia, history, now, onTab }: ExpandedProps & { now: Date }) {
+  const latest = history[0];
+  return (
+    <div className="home">
+      <div className="home-main">
+        {media ? (
+          <div className="home-player">
+            <Artwork media={media} className="home-art" />
+            <div className="home-meta">
+              <div className="track-title">{media.title}</div>
+              <div className="track-artist">{media.artist}</div>
+              <Transport media={media} onMedia={onMedia} size="small" />
+            </div>
+          </div>
+        ) : (
+          <EmptyState icon="music" title="Nothing playing">
+            Play something in Spotify, a browser or any media app.
+          </EmptyState>
+        )}
+        {latest && (
+          <button type="button" className="home-latest" onClick={() => onTab("notifications")}>
+            <AppIcon app={latest.app} icon={latest.icon} className="latest-icon" />
+            <span className="latest-text">
+              <span className="latest-title">{latest.title}</span>
+              <span className="latest-body">{latest.body || latest.app}</span>
+            </span>
+            <span className="latest-time">{ago(latest.receivedAt, now)}</span>
+          </button>
+        )}
+      </div>
+      <Calendar today={now} />
+    </div>
+  );
+}
+
+function MediaTab({ media, onMedia }: { media: MediaState | null; onMedia: (a: MediaAction) => void }) {
+  if (!media)
+    return (
+      <EmptyState icon="music" title="Nothing playing">
+        Play something in Spotify, a browser or any media app and it shows up here.
+      </EmptyState>
+    );
+  return (
+    <div className="player">
+      <div className="player-art-wrap">
+        <Artwork media={media} className="player-art" />
+      </div>
+      <div className="player-meta">
+        {media.app && <div className="player-app">Playing in {media.app}</div>}
+        <div className="player-title">{media.title}</div>
+        <div className="player-artist">{media.artist}</div>
+        <div className="player-row">
+          <Transport media={media} onMedia={onMedia} size="large" />
+          <Visualizer playing={media.playing} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NotificationsTab({ history, onClear, now }: { history: ReceivedNotification[]; onClear: () => void; now: Date }) {
+  if (!history.length)
+    return (
+      <EmptyState icon="bell" title="No notifications yet">
+        Notifications from your apps collect here as they arrive.
+      </EmptyState>
+    );
+  return (
+    <div className="list-wrap">
+      <div className="list-head">
+        <span>
+          {history.length} {history.length === 1 ? "notification" : "notifications"}
+        </span>
+        <button type="button" className="text-button" onClick={onClear}>
+          Clear all
+        </button>
+      </div>
+      <ul className="list">
+        {history.map((n) => (
+          <li key={n.id} className="list-item">
+            <AppIcon app={n.app} icon={n.icon} className="list-icon" />
+            <div className="list-text">
+              <div className="list-line">
+                <span className="list-app">{n.app}</span>
+                <span className="list-time">{ago(n.receivedAt, now)}</span>
+              </div>
+              <div className="list-title">{n.title}</div>
+              {n.body && <div className="list-body">{n.body}</div>}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+const DECISION_TEXT: Record<Decision, string> = { allow: "Approved", deny: "Denied", ask: "Sent to terminal" };
+
+function ClaudeTab({ decisions, now }: { decisions: PastDecision[]; now: Date }) {
+  if (!decisions.length)
+    return (
+      <EmptyState icon="spark" title="No requests yet">
+        When Claude Code asks for permission, the request drops down from the notch. To connect it, choose Install Claude Code hook in
+        the tray menu.
+      </EmptyState>
+    );
+  return (
+    <div className="list-wrap">
+      <div className="list-head">
+        <span>Recent requests</span>
+      </div>
+      <ul className="list">
+        {decisions.map((d) => (
+          <li key={d.request.id + d.at} className="list-item decision">
+            <span className={`decision-mark is-${d.decision}`} aria-hidden />
+            <div className="list-text">
+              <div className="list-line">
+                <span className="tool-chip">{d.request.tool}</span>
+                <span className={`decision-text is-${d.decision}`}>{DECISION_TEXT[d.decision]}</span>
+                <span className="list-time">{ago(d.at, now)}</span>
+              </div>
+              <code className="decision-command">{d.request.command}</code>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// ---------- pieces ----------
+
+function Transport({ media, onMedia, size }: { media: MediaState; onMedia: (a: MediaAction) => void; size: "small" | "large" }) {
+  return (
+    <div className={`transport is-${size}`}>
+      <button type="button" className="transport-button" aria-label="Previous" onClick={() => onMedia("previous")}>
+        <Icon name="prev" />
+      </button>
+      <button type="button" className="transport-button is-main" aria-label={media.playing ? "Pause" : "Play"} onClick={() => onMedia("play_pause")}>
+        <Icon name={media.playing ? "pause" : "play"} />
+      </button>
+      <button type="button" className="transport-button" aria-label="Next" onClick={() => onMedia("next")}>
+        <Icon name="next" />
+      </button>
+    </div>
+  );
+}
+
+function Calendar({ today }: { today: Date }) {
+  const [offset, setOffset] = useState(0);
+  const first = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+  const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  const lead = first.getDay();
+  const cells = Array.from({ length: 42 }, (_, i) => new Date(first.getFullYear(), first.getMonth(), i - lead + 1));
+  const rows = Math.ceil((lead + daysInMonth) / 7);
+  const weekdays = Array.from({ length: 7 }, (_, i) =>
+    new Date(2026, 1, 1 + i).toLocaleDateString([], { weekday: "narrow" }),
+  );
+  const isToday = (d: Date) => d.toDateString() === today.toDateString();
+
+  return (
+    <div className="calendar">
+      <div className="calendar-head">
+        <span className="calendar-month">{first.toLocaleDateString([], { month: "long", year: "numeric" })}</span>
+        <div className="calendar-nav">
+          {offset !== 0 && (
+            <button type="button" className="text-button" onClick={() => setOffset(0)}>
+              Today
+            </button>
+          )}
+          <button type="button" className="round-button is-small" aria-label="Previous month" onClick={() => setOffset((o) => o - 1)}>
+            <Icon name="chevronLeft" />
+          </button>
+          <button type="button" className="round-button is-small" aria-label="Next month" onClick={() => setOffset((o) => o + 1)}>
+            <Icon name="chevronRight" />
+          </button>
+        </div>
+      </div>
+      <div className="calendar-grid" role="grid">
+        {weekdays.map((w, i) => (
+          <span key={`w${i}`} className="calendar-weekday">
+            {w}
+          </span>
+        ))}
+        {cells.slice(0, rows * 7).map((d) => (
+          <span
+            key={d.toISOString()}
+            className={`calendar-day${d.getMonth() !== first.getMonth() ? " is-outside" : ""}${isToday(d) ? " is-today" : ""}`}
+          >
+            {d.getDate()}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function EmptyState({ icon, title, children }: { icon: IconName; title: string; children: ReactNode }) {
+  return (
+    <div className="empty">
+      <Icon name={icon} className="empty-icon" />
+      <div className="empty-title">{title}</div>
+      <div className="empty-text">{children}</div>
+    </div>
+  );
+}
+
+function Artwork({ media, className }: { media: MediaState; className: string }) {
+  return media.artwork ? <img className={`artwork ${className}`} src={media.artwork} alt="" /> : <div className={`artwork is-blank ${className}`} />;
+}
+
+function AppIcon({ app, icon, className }: { app: string; icon?: string; className: string }) {
+  if (icon) return <img className={`app-icon ${className}`} src={icon} alt="" />;
+  const hue = [...app].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 0);
+  return (
+    <span className={`app-icon is-letter ${className}`} style={{ background: `hsl(${hue} 55% 46%)` }} aria-hidden>
+      {app.charAt(0).toUpperCase()}
+    </span>
+  );
+}
+
+/** Decorative bars in the cover's colour. Real levels would need loopback audio capture. */
 function Visualizer({ playing }: { playing: boolean }) {
   return (
-    <div className={`visualizer${playing ? " playing" : ""}`} aria-hidden>
-      {[0, 1, 2, 3].map((i) => (
-        <span key={i} style={{ animationDelay: `${i * -0.23}s` }} />
+    <div className={`visualizer${playing ? " is-playing" : ""}`} aria-hidden>
+      {[0, 1, 2, 3, 4].map((i) => (
+        <span key={i} style={{ animationDelay: `${i * -0.19}s` }} />
       ))}
     </div>
   );
 }
 
-function IconButton({ label, d, onClick, big }: { label: string; d: string; onClick: () => void; big?: boolean }) {
-  return (
-    <button className={`icon-btn${big ? " big" : ""}`} aria-label={label} title={label} onClick={onClick}>
-      <svg viewBox="0 0 24 24" fill="currentColor">
-        <path d={d} />
-      </svg>
-    </button>
-  );
-}
-
-function Clock() {
+function useNow(everyMs: number) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
-    const t = window.setInterval(() => setNow(new Date()), 1000);
+    const t = window.setInterval(() => setNow(new Date()), everyMs);
     return () => window.clearInterval(t);
-  }, []);
-  return (
-    <div className="clock">
-      <div className="time">{now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
-      <div className="subtitle">{now.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })} · Nothing playing</div>
-    </div>
-  );
+  }, [everyMs]);
+  return now;
+}
+
+function ago(at: number, now: Date) {
+  const s = Math.max(0, Math.round((now.getTime() - at) / 1000));
+  if (s < 60) return "now";
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.round(m / 60);
+  return h < 24 ? `${h}h` : `${Math.round(h / 24)}d`;
 }

@@ -1,35 +1,46 @@
-//! The floating window: placement at the top-center of the primary monitor, staying on top,
+//! The floating window: placement at the top-center of the chosen monitor, staying on top,
 //! and selective click-through.
 //!
-//! Click-through works the same way on every platform: the window is created click-through
-//! (`set_ignore_cursor_events(true)`), and a background thread polls the global cursor. When the
-//! cursor enters the pill's on-screen box (reported by the webview via `set_hit_rect`), the
-//! window starts accepting input and the UI is told it is hovered; when it leaves, the window
-//! goes back to click-through. The webview can't detect hover by itself because a click-through
-//! window receives no mouse events at all.
+//! The window is always click-through except while the notch is *open* (or showing a card you
+//! must click, like a Claude permission request) and the cursor is over it. A closed notch sits
+//! on top of browser tab strips and title bars, so it never takes clicks: they go to whatever is
+//! underneath. To open it you push the pointer against the top edge of the screen above it, or
+//! (if enabled) rest the pointer on it for a moment.
+//!
+//! A background thread polls the global cursor because a click-through window receives no
+//! mouse events at all; the webview reports the notch's box and whether it's interactive via
+//! `set_hit_rect`, and is told to open or close via `pill:hover`.
 
 use std::error::Error;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use serde::Deserialize;
-use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow};
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, State, WebviewWindow};
+
+use crate::settings::SettingsStore;
 
 pub const LABEL: &str = "pill";
 
-/// Window size in logical px. Must fit the largest pill view (see `SIZES` in src/pill/Pill.tsx)
-/// plus its shadow.
-const WINDOW_WIDTH: f64 = 560.0;
-const WINDOW_HEIGHT: f64 = 240.0;
+/// Window size in logical px at scale 1 with no top gap. Must fit the largest notch view (see
+/// `SIZES` in src/pill/Pill.tsx) plus its shadow.
+const WINDOW_WIDTH: f64 = 720.0;
+const WINDOW_HEIGHT: f64 = 340.0;
 
 /// ~60 Hz keeps hover feeling instant; each tick is one GetCursorPos/XQueryPointer.
 const POLL: Duration = Duration::from_millis(16);
 /// Every ~1s: re-assert z-order, follow monitor/DPI changes, refresh cached geometry.
 const SLOW_TICK_EVERY: u64 = 60;
-/// Slack around the pill (CSS px) so the edge isn't a hair trigger.
+/// Slack around the notch (CSS px) so its edge isn't a hair trigger.
 const HIT_PADDING: f64 = 4.0;
+/// "Pushed against the top edge": within this many physical px of the monitor's top.
+const EDGE_PX: f64 = 2.0;
+/// How long the pointer must rest on a closed notch to open it (when that's enabled). Long
+/// enough that reaching for a browser tab underneath doesn't open it. Measured in real time:
+/// `sleep(16ms)` can take twice that on Windows, so counting ticks would drift.
+const DWELL: Duration = Duration::from_millis(600);
 
-/// The pill's box in CSS px, relative to the window's top-left corner.
+/// The notch's box in CSS px, relative to the window's top-left corner.
 #[derive(Clone, Copy, Debug, Deserialize)]
 pub struct Rect {
     x: f64,
@@ -40,25 +51,72 @@ pub struct Rect {
 
 #[derive(Default)]
 pub struct HitState {
-    rect: Mutex<Option<Rect>>,
+    shape: Mutex<Option<(Rect, bool)>>,
 }
 
+/// `interactive`: the notch is open, or shows something that must be clickable. Otherwise it
+/// stays click-through even under the cursor.
 #[tauri::command]
-pub fn set_hit_rect(rect: Rect, state: State<HitState>) {
-    *state.rect.lock().unwrap() = Some(rect);
+pub fn set_hit_rect(rect: Rect, interactive: bool, state: State<HitState>) {
+    *state.shape.lock().unwrap() = Some((rect, interactive));
 }
 
-/// Where the window should be: horizontally centered, flush with the top of the primary monitor.
+/// The monitor chosen in settings, falling back to the primary one if it's unplugged.
+fn chosen_monitor(win: &WebviewWindow, wanted: Option<&str>) -> Result<Monitor, Box<dyn Error>> {
+    if let Some(wanted) = wanted {
+        if let Some(m) = win.available_monitors()?.into_iter().find(|m| m.name().map(String::as_str) == Some(wanted)) {
+            return Ok(m);
+        }
+    }
+    match win.primary_monitor()? {
+        Some(m) => Ok(m),
+        None => Ok(win.current_monitor()?.ok_or("no monitor found")?),
+    }
+}
+
+/// Where the window should be: horizontally centered at the top of the chosen monitor, sized
+/// for the pill's scale and top gap (both applied in CSS; see src/pill/Pill.tsx).
 fn target_geometry(win: &WebviewWindow) -> Result<(PhysicalPosition<i32>, PhysicalSize<u32>), Box<dyn Error>> {
-    let monitor = match win.primary_monitor()? {
-        Some(m) => m,
-        None => win.current_monitor()?.ok_or("no monitor found")?,
-    };
-    let scale = monitor.scale_factor();
-    let size = PhysicalSize::new((WINDOW_WIDTH * scale).round() as u32, (WINDOW_HEIGHT * scale).round() as u32);
+    let display = win.try_state::<SettingsStore>().map(|s| s.get().display).unwrap_or_default();
+    let monitor = chosen_monitor(win, display.monitor.as_deref())?;
+    let dpi = monitor.scale_factor();
+    let width = WINDOW_WIDTH * display.scale;
+    let height = display.top_offset + WINDOW_HEIGHT * display.scale;
+    let size = PhysicalSize::new((width * dpi).round() as u32, (height * dpi).round() as u32);
     let origin = monitor.position();
     let x = origin.x + (monitor.size().width as i32 - size.width as i32) / 2;
     Ok((PhysicalPosition::new(x, origin.y), size))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonitorInfo {
+    name: String,
+    label: String,
+    primary: bool,
+}
+
+#[tauri::command]
+pub fn list_monitors(app: AppHandle) -> Result<Vec<MonitorInfo>, String> {
+    let primary = app.primary_monitor().map_err(|e| e.to_string())?.and_then(|m| m.name().cloned());
+    let monitors = app.available_monitors().map_err(|e| e.to_string())?;
+    Ok(monitors
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, m)| {
+            let name = m.name()?.clone();
+            let size = m.size();
+            let is_primary = primary.as_ref() == Some(&name);
+            let label = format!(
+                "Display {} — {}×{}{}",
+                i + 1,
+                size.width,
+                size.height,
+                if is_primary { " (primary)" } else { "" }
+            );
+            Some(MonitorInfo { name, label, primary: is_primary })
+        })
+        .collect())
 }
 
 /// Moves/resizes the window only if it isn't already where it should be, so this is cheap to
@@ -87,26 +145,43 @@ impl Geometry {
     }
 }
 
-fn cursor_over_pill(win: &WebviewWindow, geo: &Geometry) -> bool {
-    let Some(r) = *win.state::<HitState>().rect.lock().unwrap() else {
-        return false;
+/// Where the cursor is relative to the notch.
+#[derive(Default, Clone, Copy)]
+struct Pointer {
+    /// Over the notch's box.
+    over: bool,
+    /// Pushed against the top edge of the screen, horizontally within the notch. The notch may
+    /// sit lower than the edge (a top gap), so this isn't implied by `over`.
+    at_edge: bool,
+    interactive: bool,
+}
+
+fn read_pointer(win: &WebviewWindow, geo: &Geometry) -> Pointer {
+    let Some((r, interactive)) = *win.state::<HitState>().shape.lock().unwrap() else {
+        return Pointer::default();
     };
     let Ok(cursor) = win.cursor_position() else {
-        return false;
+        return Pointer { interactive, ..Pointer::default() };
     };
     let x = (cursor.x - geo.origin.x as f64) / geo.scale;
     let y = (cursor.y - geo.origin.y as f64) / geo.scale;
-    x >= r.x - HIT_PADDING
-        && x <= r.x + r.width + HIT_PADDING
-        && y >= r.y - HIT_PADDING
-        && y <= r.y + r.height + HIT_PADDING
+    let within_x = x >= r.x - HIT_PADDING && x <= r.x + r.width + HIT_PADDING;
+    Pointer {
+        over: within_x && y >= r.y - HIT_PADDING && y <= r.y + r.height + HIT_PADDING,
+        at_edge: within_x && cursor.y - geo.origin.y as f64 <= EDGE_PX && cursor.y >= geo.origin.y as f64,
+        interactive,
+    }
 }
 
 pub fn spawn_hit_test_loop(win: WebviewWindow) {
     std::thread::spawn(move || {
         let mut geo = Geometry::read(&win);
-        let mut inside = false;
+        let mut open = false;
+        let mut accepting_input = false;
+        let mut resting_since: Option<Instant> = None;
+        let mut open_on_hover = true;
         let mut focus = FocusGuard::default();
+        let _ = win.set_ignore_cursor_events(true);
         for tick in 0u64.. {
             std::thread::sleep(POLL);
 
@@ -116,16 +191,36 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
                 }
                 reassert_topmost(&win);
                 geo = Geometry::read(&win);
+                open_on_hover = win.try_state::<SettingsStore>().is_none_or(|s| s.get().display.open_on_hover);
             }
 
-            let now_inside = geo.as_ref().is_some_and(|g| cursor_over_pill(&win, g));
-            if now_inside != inside {
-                inside = now_inside;
-                if inside {
+            let p = geo.as_ref().map(|g| read_pointer(&win, g)).unwrap_or_default();
+            if !(p.over && !p.interactive) {
+                resting_since = None;
+            } else if resting_since.is_none() {
+                resting_since = Some(Instant::now());
+            }
+            let rested = resting_since.is_some_and(|t| t.elapsed() >= DWELL);
+
+            // Interactive (open, or a card with buttons): stays open while the pointer is over it.
+            // Closed: only the top-edge push or a long rest opens it; it never takes clicks.
+            let want_open = if p.interactive {
+                p.over || p.at_edge
+            } else {
+                p.at_edge || (open_on_hover && rested)
+            };
+            if want_open != open {
+                open = want_open;
+                if open {
                     focus.remember(&win);
                 }
-                let _ = win.set_ignore_cursor_events(!inside);
-                let _ = win.emit("pill:hover", inside);
+                let _ = win.emit("pill:hover", open);
+            }
+
+            let want_input = p.interactive && p.over;
+            if want_input != accepting_input {
+                accepting_input = want_input;
+                let _ = win.set_ignore_cursor_events(!want_input);
             }
             focus.give_back_if_taken(&win);
         }

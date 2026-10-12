@@ -1,14 +1,16 @@
 //! "Start at login": a per-user Run registry value on Windows, a `~/.config/autostart` entry on
-//! Linux (via tauri-plugin-autostart). Off until the user turns it on from the tray.
+//! Linux (via tauri-plugin-autostart). Off until the user turns it on from the tray or Settings.
 
-use tauri::AppHandle;
+use tauri::menu::CheckMenuItem;
+use tauri::{AppHandle, Manager, Wry};
 use tauri_plugin_autostart::ManagerExt;
-
-use crate::events;
 
 pub fn plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     tauri_plugin_autostart::Builder::new().app_name("HoverPill").build()
 }
+
+/// The tray's check item, so a change made in Settings also moves the tick.
+pub struct TrayCheck(pub CheckMenuItem<Wry>);
 
 pub fn is_enabled(app: &AppHandle) -> bool {
     app.autolaunch().is_enabled().unwrap_or(false)
@@ -24,21 +26,30 @@ pub fn refresh(app: &AppHandle) {
     }
 }
 
-/// Flips the setting and returns the resulting state.
-pub fn toggle(app: &AppHandle) -> bool {
-    let manager = app.autolaunch();
-    let result = if is_enabled(app) {
-        manager.disable()
+/// Turns start at login on or off and returns the resulting state.
+pub fn set(app: &AppHandle, enabled: bool) -> Result<bool, String> {
+    let result = if !enabled {
+        app.autolaunch().disable().map_err(|e| e.to_string())
     } else if cfg!(debug_assertions) {
         // A debug build only works with the Vite dev server running; registering it would leave
         // a blank pill at every login.
-        events::notify(app, "Start at login needs a release build", "Build with `npm run tauri build` and enable it there.");
-        Ok(())
+        Err("Start at login needs a release build (npm run tauri build).".into())
     } else {
-        manager.enable()
+        app.autolaunch().enable().map_err(|e| e.to_string())
     };
-    if let Err(e) = result {
-        events::notify(app, "Couldn't change start at login", &e.to_string());
+    let now = is_enabled(app);
+    if let Some(check) = app.try_state::<TrayCheck>() {
+        let _ = check.0.set_checked(now);
     }
-    is_enabled(app)
+    result.map(|()| now)
+}
+
+#[tauri::command]
+pub fn get_autostart(app: AppHandle) -> bool {
+    is_enabled(&app)
+}
+
+#[tauri::command]
+pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    set(&app, enabled)
 }

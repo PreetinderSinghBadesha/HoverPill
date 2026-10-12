@@ -1,6 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { Decision, MediaAction, MediaState, NotificationItem, PermissionRequest, Rect } from "./types";
+import {
+  DEFAULT_SETTINGS,
+  type Decision,
+  type MediaAction,
+  type MediaState,
+  type MonitorInfo,
+  type NotificationItem,
+  type PermissionRequest,
+  type PlayerInfo,
+  type Rect,
+  type Settings,
+} from "./types";
 
 /** False when the UI is opened in a plain browser (`npm run dev`) for styling work. */
 export const inTauri = "__TAURI_INTERNALS__" in window;
@@ -12,6 +23,8 @@ export type PillEvents = {
   "pill:permission-cancel": { id: string };
   "pill:notification": NotificationItem;
   "pill:media": MediaState | null;
+  /** Sent to every window after a save, with the values Rust actually stored. */
+  "settings:changed": Settings;
 };
 
 export type Subscription = { off: () => void; registered: Promise<void> };
@@ -38,8 +51,13 @@ export function pillReady() {
   if (inTauri) invoke("pill_ready").catch(console.error);
 }
 
-export function setHitRect(rect: Rect) {
-  if (inTauri) invoke("set_hit_rect", { rect }).catch(console.error);
+/** `interactive`: the notch should take clicks while the pointer is over it (open, or a card with buttons). */
+export function setHitRect(rect: Rect, interactive: boolean) {
+  if (inTauri) invoke("set_hit_rect", { rect, interactive }).catch(console.error);
+}
+
+export function openSettings() {
+  if (inTauri) invoke("open_settings").catch(console.error);
 }
 
 export function resolvePermission(id: string, decision: Decision) {
@@ -53,4 +71,36 @@ export function mediaCommand(action: MediaAction) {
 /** What's playing right now; later changes arrive as `pill:media`. */
 export async function currentMedia(): Promise<MediaState | null> {
   return inTauri ? invoke<MediaState | null>("current_media") : null;
+}
+
+// ---------- settings ----------
+
+export async function getSettings(): Promise<Settings> {
+  return inTauri ? invoke<Settings>("get_settings") : structuredClone(DEFAULT_SETTINGS);
+}
+
+/** Resolves to what was stored after Rust clamped it. */
+export async function saveSettings(settings: Settings): Promise<Settings> {
+  return inTauri ? invoke<Settings>("set_settings", { settings }) : settings;
+}
+
+export async function listMonitors(): Promise<MonitorInfo[]> {
+  return inTauri ? invoke<MonitorInfo[]>("list_monitors") : [{ name: "DISPLAY1", label: "Display 1 — 1920×1080 (primary)", primary: true }];
+}
+
+export async function recentNotificationApps(): Promise<string[]> {
+  return inTauri ? invoke<string[]>("recent_notification_apps") : ["Discord", "WhatsApp", "Gmail"];
+}
+
+export async function mediaPlayers(): Promise<PlayerInfo[]> {
+  return inTauri ? invoke<PlayerInfo[]>("media_players") : [{ id: "Spotify.exe", label: "Spotify" }, { id: "chrome", label: "Chrome" }];
+}
+
+export async function getAutostart(): Promise<boolean> {
+  return inTauri ? invoke<boolean>("get_autostart") : false;
+}
+
+/** Resolves to the resulting state; rejects with a readable message (e.g. in debug builds). */
+export async function setAutostart(enabled: boolean): Promise<boolean> {
+  return inTauri ? invoke<boolean>("set_autostart", { enabled }) : enabled;
 }

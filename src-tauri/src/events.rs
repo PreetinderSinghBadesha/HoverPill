@@ -10,6 +10,7 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::broker::Broker;
+use crate::settings::SettingsStore;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -73,11 +74,14 @@ pub struct MediaState {
     pub artist: String,
     pub playing: bool,
     pub artwork: Option<String>,
+    /// Readable player name, e.g. "Spotify".
+    pub app: Option<String>,
 }
 
 impl From<NowPlaying> for MediaState {
     fn from(n: NowPlaying) -> Self {
-        Self { title: n.title, artist: n.artist, playing: n.playing, artwork: n.artwork }
+        let app = (!n.source.is_empty()).then(|| hoverpill_media::Source::new(n.source).label);
+        Self { title: n.title, artist: n.artist, playing: n.playing, artwork: n.artwork, app }
     }
 }
 
@@ -131,6 +135,6 @@ pub fn media_command(action: MediaAction, media: State<Media>) {
 
 /// The UI asks once on load; after that, changes arrive as `pill:media` events.
 #[tauri::command]
-pub fn current_media(media: State<Media>) -> Option<MediaState> {
-    media.current().map(MediaState::from)
+pub fn current_media(media: State<Media>, settings: State<SettingsStore>) -> Option<MediaState> {
+    media.current().filter(|_| settings.get().media.enabled).map(MediaState::from)
 }

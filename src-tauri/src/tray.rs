@@ -1,5 +1,6 @@
-﻿//! Tray icon: the app has no taskbar entry, so this is how you quit it, toggle start at login,
-//! and install the Claude Code hook. It can also fire demo events to exercise every pill state.
+//! Tray icon: the app has no taskbar entry, so this is how you open Settings, quit, toggle
+//! start at login, and install the Claude Code hook. It can also fire demo events to exercise
+//! every pill state.
 
 use std::path::PathBuf;
 
@@ -7,8 +8,8 @@ use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{App, AppHandle, Manager};
 
-use crate::autostart;
 use crate::broker::{install, Broker};
+use crate::{autostart, settings};
 use crate::events::{self, NotificationItem, PermissionRequest};
 
 pub fn init(app: &App) -> tauri::Result<()> {
@@ -17,6 +18,7 @@ pub fn init(app: &App) -> tauri::Result<()> {
     let menu = Menu::with_items(
         app,
         &[
+            &MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?,
             &start_at_login,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, "hook-install", "Install Claude Code hook", true, None::<&str>)?,
@@ -33,10 +35,13 @@ pub fn init(app: &App) -> tauri::Result<()> {
         .tooltip("HoverPill")
         .menu(&menu)
         .show_menu_on_left_click(true)
-        .on_menu_event(move |app, event| match event.id.as_ref() {
-            // The menu flips the tick itself on click; overwrite it with what actually happened.
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "settings" => settings::open_window(app),
+            // The menu has already flipped the tick; `set` puts it back to what really happened.
             "autostart" => {
-                let _ = start_at_login.set_checked(autostart::toggle(app));
+                if let Err(e) = autostart::set(app, !autostart::is_enabled(app)) {
+                    events::notify(app, "Couldn't change start at login", &e);
+                }
             }
             "hook-install" => install_hook(app),
             "hook-remove" => remove_hook(app),
@@ -49,6 +54,7 @@ pub fn init(app: &App) -> tauri::Result<()> {
         tray = tray.icon(icon.clone());
     }
     tray.build(app)?;
+    app.manage(autostart::TrayCheck(start_at_login));
     Ok(())
 }
 

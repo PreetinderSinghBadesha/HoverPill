@@ -17,7 +17,30 @@ npm install
 npm run tauri dev
 ```
 
-The pill has no taskbar entry. Use the **tray icon** to quit, to turn on **Start at login**, or to fire demo events (a Claude permission request or a notification).
+**Using the notch.** It sits flat against the top edge of the screen, like a laptop's camera notch.
+
+- **When it's closed, clicks go straight through it** to whatever is underneath, so browser tabs and title bars stay usable.
+- **To open it,** push the pointer against the top edge of the screen above the notch, or rest the pointer on it for about half a second. You can turn the resting option off in Settings.
+- **Inside the open notch,** tabs switch between:
+  - **Home:** what's playing, the latest notification, and a calendar
+  - **Media:** large cover art and controls
+  - **Notifications:** everything received this session
+  - **Claude:** your recent permission decisions
+
+  The gear button opens Settings.
+
+The pill has no taskbar entry. Use the **tray icon** to open **Settings…**, to quit, to turn on **Start at login**, or to fire demo events (a Claude permission request or a notification). Launching HoverPill again while it's running also opens Settings.
+
+**Settings** has four tabs, and changes apply immediately:
+
+| Tab | What's there |
+|---|---|
+| General | Start at login, version |
+| Display | Which monitor, distance from the top edge (0 = attached notch, more = floating pill), size (80–140%), open on rest |
+| Notifications | On/off, how long each card stays (2–15 s), per-app on/off for apps that have sent notifications |
+| Media | On/off, per-player on/off (e.g. hide a browser so the pill shows Spotify) |
+
+Settings are stored in `settings.json` in the app's config folder (`%APPDATA%\dev.hoverpill.app` on Windows, `~/.config/dev.hoverpill.app` on Linux).
 
 **Start at login:**
 
@@ -56,8 +79,10 @@ To work on the UI in a normal browser, run `npm run dev` and open http://localho
 
 ```
 src/                     React UI
-  pill/Pill.tsx          spring-animated pill, view switching, hit-rect reporting
-  pill/views.tsx         idle / media / expanded / notification / permission views
+  pill/Pill.tsx          spring-animated notch, view switching, hit-rect reporting
+  pill/views.tsx         closed states, notification/permission cards, the tabbed open notch
+  pill/icons.tsx         stroke icon set
+  lib/useArtworkColor.ts accent colour sampled from the album art
   lib/usePillState.ts    event-driven state and view priority
   lib/bridge.ts          Tauri events and commands (no-ops in a plain browser)
 src-tauri/src/
@@ -70,12 +95,14 @@ src-tauri/src/
   events.rs              shared payloads and commands
   tray.rs                tray menu: start at login, hook install, demo events, quit
   autostart.rs           start-at-login toggle (tauri-plugin-autostart)
+  settings.rs            settings model, storage, Settings window, lists for the UI
+src/settings/            the tabbed Settings window (settings.html)
 ```
 
 ## Status
 
 | | |
 |---|---|
-| ✅ Done | Floating window, selective click-through, spring animations, all views, Claude permission broker, media controller, notification stream, never steals focus, start at login, single instance |
+| ✅ Done | Floating window, selective click-through, spring animations, all views, Claude permission broker, media controller, notification stream, never steals focus, start at login, single instance, tabbed Settings window |
 | 🧪 Untested | Everything on Linux (it compiles but has never run) |
-| 🔜 Next | Settings, Wayland layer-shell (see the architecture doc) |
+| 🔜 Next | Wayland layer-shell (see the architecture doc) |

@@ -7,6 +7,7 @@
 //! occasionally miss events) trigger a re-read, and the callback fires only when what's shown
 //! would actually change.
 
+use std::collections::HashSet;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -28,6 +29,49 @@ pub struct NowPlaying {
     pub playing: bool,
     /// `data:` URL, or an `https:` URL straight from the player.
     pub artwork: Option<String>,
+    /// Which player this is (see [`Source`]).
+    pub source: String,
+}
+
+/// A player as the OS identifies it: the AppUserModelID on Windows (`Spotify.exe`, `chrome`),
+/// the MPRIS bus-name suffix on Linux (`spotify`, `firefox`). Stable across restarts, so it's
+/// what the "ignore this player" setting stores.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Source {
+    pub id: String,
+    pub label: String,
+}
+
+impl Source {
+    pub fn new(id: impl Into<String>) -> Self {
+        let id = id.into();
+        Self { label: label_for(&id), id }
+    }
+}
+
+/// A readable name for a source id; ids are often exe names, package names or hashes.
+fn label_for(id: &str) -> String {
+    let app = id.rsplit('!').next().unwrap_or(id); // packaged apps: "Family_hash!AppId"
+    let app = app.rsplit(['\\', '/']).next().unwrap_or(app);
+    let app = app.strip_suffix(".exe").or_else(|| app.strip_suffix(".EXE")).unwrap_or(app);
+    let known = match app.to_ascii_lowercase().as_str() {
+        "308046b0af4a39cb" | "firefox" => Some("Firefox"), // Firefox registers under a hash on Windows
+        "chrome" | "google-chrome" | "chromium" => Some("Chrome"),
+        "msedge" => Some("Microsoft Edge"),
+        "brave" | "brave-browser" => Some("Brave"),
+        "spotify" => Some("Spotify"),
+        "vlc" => Some("VLC"),
+        _ => None,
+    };
+    if let Some(name) = known {
+        return name.to_string();
+    }
+    let last = app.rsplit('.').next().unwrap_or(app);
+    let mut chars = last.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => id.to_string(),
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -45,16 +89,24 @@ enum Msg {
 /// Lets a backend's OS event handlers ask the worker to re-read.
 type Notify = Arc<dyn Fn() + Send + Sync>;
 
+#[derive(Default)]
+struct Shared {
+    current: Option<NowPlaying>,
+    /// Every player seen on the last read, including ignored ones.
+    sources: Vec<Source>,
+    ignored: HashSet<String>,
+}
+
 pub struct Media {
     tx: Sender<Msg>,
-    current: Arc<Mutex<Option<NowPlaying>>>,
+    shared: Arc<Mutex<Shared>>,
 }
 
 impl Media {
     pub fn spawn(on_change: impl Fn(Option<NowPlaying>) + Send + 'static) -> Self {
         let (tx, rx) = mpsc::channel();
-        let current = Arc::new(Mutex::new(None));
-        let shared = Arc::clone(&current);
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        let worker_shared = Arc::clone(&shared);
         let refresh_tx = tx.clone();
         let notify: Notify = Arc::new(move || {
             let _ = refresh_tx.send(Msg::Refresh);
@@ -83,26 +135,39 @@ impl Media {
                         msg = rx.try_recv().ok();
                     }
 
-                    let now = backend.read().unwrap_or_else(|e| {
+                    let ignored = worker_shared.lock().unwrap().ignored.clone();
+                    let (now, sources) = backend.read(&ignored).unwrap_or_else(|e| {
                         eprintln!("hoverpill-media: read failed: {e}");
-                        None
+                        (None, Vec::new())
                     });
-                    let mut current = shared.lock().unwrap();
-                    if *current != now {
-                        *current = now.clone();
-                        drop(current);
+                    let mut shared = worker_shared.lock().unwrap();
+                    shared.sources = sources;
+                    if shared.current != now {
+                        shared.current = now.clone();
+                        drop(shared);
                         on_change(now);
                     }
                 }
             })
             .expect("spawning the media thread");
 
-        Self { tx, current }
+        Self { tx, shared }
     }
 
     /// Latest known state, for a UI that starts listening after the first change.
     pub fn current(&self) -> Option<NowPlaying> {
-        self.current.lock().unwrap().clone()
+        self.shared.lock().unwrap().current.clone()
+    }
+
+    /// Players currently known to the OS, ignored ones included.
+    pub fn sources(&self) -> Vec<Source> {
+        self.shared.lock().unwrap().sources.clone()
+    }
+
+    /// Players (by [`Source::id`]) to skip when choosing what to show.
+    pub fn set_ignored(&self, ids: impl IntoIterator<Item = String>) {
+        self.shared.lock().unwrap().ignored = ids.into_iter().collect();
+        let _ = self.tx.send(Msg::Refresh);
     }
 
     pub fn send(&self, action: Action) {
@@ -153,6 +218,16 @@ mod tests {
         assert_eq!(calls, 1);
         let next = cache.get_or("Other", "Artist", || Some("b".into()));
         assert_eq!(next.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn source_labels() {
+        assert_eq!(Source::new("Spotify.exe").label, "Spotify");
+        assert_eq!(Source::new("308046B0AF4A39CB").label, "Firefox");
+        assert_eq!(Source::new("MSEdge").label, "Microsoft Edge");
+        assert_eq!(Source::new("Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic").label, "ZuneMusic");
+        assert_eq!(Source::new("C:\\Tools\\foobar2000.exe").label, "Foobar2000");
+        assert_eq!(Source::new("rhythmbox").label, "Rhythmbox");
     }
 
     #[test]

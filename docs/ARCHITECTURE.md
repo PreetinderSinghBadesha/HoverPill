@@ -17,20 +17,28 @@
 ## 2. The window (built in this repo)
 
 ```
-┌──────────────── transparent window, 560×240 logical, always on top ───────────────┐
-│                         ╭──────────── pill ────────────╮                          │
-│                         ╰──────────────────────────────╯   ← only this takes input │
+┌──────────────── transparent window, 720×340 logical, always on top ───────────────┐
+│                       ◟╭──────────── notch ───────────╮◞                          │
+│                         ╰──────────────────────────────╯   ← takes input only open │
 │     click-through everywhere else (WS_EX_TRANSPARENT / empty X11 input shape)      │
 └───────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Fixed window, morphing pill.** The OS window never resizes. Resizing native windows at 60 fps tears and flickers, especially with WebView2. Only the DOM pill animates, inside a window that is already large enough for the biggest view.
+- **Fixed window, morphing notch.** The OS window never resizes. Resizing native windows at 60 fps tears and flickers, especially with WebView2. Only the DOM notch animates, inside a window that is already large enough for the biggest view.
 - **Selective click-through** (`src-tauri/src/notch.rs`):
   1. The window starts click-through.
-  2. The UI reports the pill's box with `set_hit_rect` every time its size changes, which includes every frame of the spring animation.
-  3. A Rust thread polls the global cursor at 60 Hz. When the cursor is inside the box, the window starts accepting input and Rust emits `pill:hover = true`. When it leaves, both revert.
+  2. The UI reports, every time the notch changes size (including every frame of the spring), its box and whether it's *interactive*. It is interactive when open, or when showing the Claude card with buttons.
+  3. A Rust thread polls the global cursor at 60 Hz.
+     - **Closed:** the notch never takes input, even under the cursor, so browser tabs and title bars beneath it stay clickable. It opens (`pill:hover = true`) when the pointer is pushed against the top edge of the monitor within the notch's width (≤ 2 px), or, if "open on rest" is enabled, after resting on it for 600 ms. The 600 ms is measured in real time, because `sleep(16ms)` can last up to ~31 ms on Windows. Notification cards are closed-state too: they pass clicks through.
+     - **Interactive:** it takes input while the pointer is over it and closes when the pointer leaves.
 
-  Rust has to provide hover because a click-through window gets no DOM mouse events at all.
+  Rust has to decide all of this because a click-through window gets no DOM mouse events at all.
+- **Measured on Windows:**
+  - Resting on the closed notch: click-through for the first 644 ms (600 ms dwell plus UI latency), then open.
+  - Pushed against the top edge: open within 350 ms.
+  - Back to click-through after the pointer leaves.
+  - All four tabs clickable. They were found through UI Automation and clicked with real mouse input.
+- **Look.** True black, flat against the top edge, with concave "ears" (radial-gradient fillets) where it meets the edge. The only colour is the album art's: `useArtworkColor` samples the cover into a 24×24 canvas, weighting saturated pixels. With a top gap set, it becomes a floating pill with all corners rounded and a shadow.
 - **Staying on top.** The window uses `alwaysOnTop`. Every second, a Windows-only call (`SetWindowPos(HWND_TOPMOST)`) puts it back on top, because borderless-fullscreen apps and the taskbar can rise above it. The same tick re-centers the window when monitors, resolution, or DPI change.
 - **Limits:**
   - *Exclusive-fullscreen games* (DirectX/Vulkan exclusive mode) bypass the compositor, so nothing can draw over them. Borderless-fullscreen games, browsers, and video players are fine.
@@ -194,7 +202,16 @@ The Linux backend compiles, but I haven't run it yet.
 1. ~~Claude broker~~ (done).
 2. ~~Media: GSMTC first, then MPRIS~~ (done).
 3. ~~Notifications~~ (done; no packaging needed after all).
-4. Polish: ~~focus~~ (done), ~~autostart~~ (done), a layer-shell backend, and settings (position, which monitor, notification allow-list).
+4. Polish: ~~focus~~ (done), ~~autostart~~ (done), ~~settings~~ (done), and a layer-shell backend.
+
+**Settings** (`src-tauri/src/settings.rs`, UI in `src/settings/`):
+
+- **Rust owns the data.** It's stored in `settings.json` in the app config dir. Fields left out of the file fall back to defaults; an invalid file is ignored in favour of defaults; values are clamped and de-duplicated on every save. The Settings window edits through `get_settings`/`set_settings`, and every window hears `settings:changed`.
+- **Display.** `notch.rs` places the window on the chosen monitor (by OS name, falling back to the primary) and sizes it for the scale and top gap. The pill applies those in CSS: a `scale()` wrapper around the spring-animated pill, plus padding. It re-reports its hit rect on window resize, because a scale or monitor change moves the pill without resizing it.
+- **Notifications.** Filtering happens in Rust before an event reaches the pill. `RecentApps` remembers the last 30 app names, including blocked ones, so the UI can offer them without anyone typing names. HoverPill's own messages are never filtered.
+- **Media.** The media crate tags every session with a `Source` (Windows AppUserModelID, or the MPRIS bus-name suffix with any `.instance…` part dropped) plus a readable label. Ignored sources are skipped when choosing what to show, so the pill moves on to the next player. When media is off, the pill gets `null`.
+- **Saving from the UI.** The editable hook saves 150 ms after a slider stops moving. While a save is queued or in flight, it ignores `settings:changed` echoes so a dragged slider doesn't snap back.
+- **Opening the window.** The Settings window is built off the event-loop thread (building a WebView2 window inside a menu or IPC handler can deadlock). A second launch of HoverPill opens Settings. The second copy calls `AllowSetForegroundWindow(ASFW_ANY)` before handing over so the window can come to the front. That last part is unverified: test launches came from a background process, which has no foreground rights to pass on.
 
 **Autostart** (`src-tauri/src/autostart.rs`):
 

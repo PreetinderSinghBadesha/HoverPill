@@ -27,8 +27,53 @@ export type MediaState = {
   artist: string;
   playing: boolean;
   artwork?: string;
+  /** Readable player name, e.g. "Spotify". */
+  app?: string;
 };
 
 export type MediaAction = "play_pause" | "next" | "previous";
 
 export type View = "idle" | "media" | "expanded" | "notification" | "permission";
+
+/** Tabs inside the open notch. */
+export type Tab = "home" | "media" | "notifications" | "claude";
+
+export type ReceivedNotification = NotificationItem & { receivedAt: number };
+
+export type PastDecision = { request: PermissionRequest; decision: Decision; at: number };
+
+// Mirrors src-tauri/src/settings.rs. Rust clamps everything on save; these ranges are for the UI.
+export type Settings = {
+  display: {
+    /** Monitor name from `list_monitors`; null follows the primary monitor. */
+    monitor: string | null;
+    topOffset: number;
+    scale: number;
+    /** Also open when the pointer rests on the notch (not just when pushed to the top edge). */
+    openOnHover: boolean;
+  };
+  notifications: {
+    enabled: boolean;
+    durationSecs: number;
+    blockedApps: string[];
+  };
+  media: {
+    enabled: boolean;
+    ignoredPlayers: string[];
+  };
+};
+
+export const DEFAULT_SETTINGS: Settings = {
+  display: { monitor: null, topOffset: 0, scale: 1, openOnHover: true },
+  notifications: { enabled: true, durationSecs: 4.5, blockedApps: [] },
+  media: { enabled: true, ignoredPlayers: [] },
+};
+
+export const RANGES = {
+  topOffset: { min: 0, max: 48, step: 1 },
+  scale: { min: 0.8, max: 1.4, step: 0.05 },
+  durationSecs: { min: 2, max: 15, step: 0.5 },
+} as const;
+
+export type MonitorInfo = { name: string; label: string; primary: boolean };
+export type PlayerInfo = { id: string; label: string };
