@@ -1,19 +1,24 @@
-﻿//! Tray icon: the app has no taskbar entry, so this is how you quit it and install the Claude
-//! Code hook. It can also fire demo events to exercise every pill state.
+﻿//! Tray icon: the app has no taskbar entry, so this is how you quit it, toggle start at login,
+//! and install the Claude Code hook. It can also fire demo events to exercise every pill state.
 
 use std::path::PathBuf;
 
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{App, AppHandle, Manager};
 
+use crate::autostart;
 use crate::broker::{install, Broker};
 use crate::events::{self, NotificationItem, PermissionRequest};
 
 pub fn init(app: &App) -> tauri::Result<()> {
+    let start_at_login =
+        CheckMenuItem::with_id(app, "autostart", "Start at login", true, autostart::is_enabled(app.handle()), None::<&str>)?;
     let menu = Menu::with_items(
         app,
         &[
+            &start_at_login,
+            &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, "hook-install", "Install Claude Code hook", true, None::<&str>)?,
             &MenuItem::with_id(app, "hook-remove", "Remove Claude Code hook", true, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
@@ -28,7 +33,11 @@ pub fn init(app: &App) -> tauri::Result<()> {
         .tooltip("HoverPill")
         .menu(&menu)
         .show_menu_on_left_click(true)
-        .on_menu_event(|app, event| match event.id.as_ref() {
+        .on_menu_event(move |app, event| match event.id.as_ref() {
+            // The menu flips the tick itself on click; overwrite it with what actually happened.
+            "autostart" => {
+                let _ = start_at_login.set_checked(autostart::toggle(app));
+            }
             "hook-install" => install_hook(app),
             "hook-remove" => remove_hook(app),
             "demo-permission" => demo_permission(app),

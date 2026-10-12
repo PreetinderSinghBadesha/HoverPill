@@ -17,7 +17,13 @@ npm install
 npm run tauri dev
 ```
 
-The pill has no taskbar entry. Use the **tray icon** to quit or to fire demo events: a Claude permission request or a notification.
+The pill has no taskbar entry. Use the **tray icon** to quit, to turn on **Start at login**, or to fire demo events (a Claude permission request or a notification).
+
+**Start at login:**
+
+- How it's stored: a per-user Run entry in the registry on Windows, an entry in `~/.config/autostart` on Linux.
+- Release builds only. Run `npm run tauri build` and enable it from the installed or built app. Debug builds refuse to turn it on, because they need the dev server and would show a blank pill at login.
+- Only one copy of HoverPill can run at a time. Launching it again shows "already running" in the pill.
 
 Media works without any setup. Whatever is playing (Spotify, a browser tab, VLC, ...) appears in the pill, and hovering shows the controls. If a player doesn't show up, see what the backend detects:
 
@@ -62,13 +68,14 @@ src-tauri/src/
   crates/media/          now playing + transport controls (GSMTC on Windows, MPRIS on Linux)
   crates/notify/         other apps' notifications (UserNotificationListener / D-Bus monitor)
   events.rs              shared payloads and commands
-  tray.rs                tray menu: hook install, demo events, quit
+  tray.rs                tray menu: start at login, hook install, demo events, quit
+  autostart.rs           start-at-login toggle (tauri-plugin-autostart)
 ```
 
 ## Status
 
 | | |
 |---|---|
-| ✅ Done | Floating window, selective click-through, spring animations, all views, Claude permission broker, media controller, notification stream, never steals focus |
+| ✅ Done | Floating window, selective click-through, spring animations, all views, Claude permission broker, media controller, notification stream, never steals focus, start at login, single instance |
 | 🧪 Untested | Everything on Linux (it compiles but has never run) |
-| 🔜 Next | Settings, autostart, Wayland layer-shell (see the architecture doc) |
+| 🔜 Next | Settings, Wayland layer-shell (see the architecture doc) |

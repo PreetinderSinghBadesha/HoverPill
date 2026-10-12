@@ -1,6 +1,7 @@
 ﻿// No console window in release builds on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod autostart;
 mod broker;
 mod events;
 mod notch;
@@ -13,6 +14,12 @@ fn main() {
     notch::linux_preflight();
 
     tauri::Builder::default()
+        // Must be first: a second copy (e.g. launched by hand after starting at login) exits
+        // here instead of opening another pill and fighting over the broker port.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            events::notify(app, "HoverPill is already running", "Use the tray icon to change settings or quit.");
+        }))
+        .plugin(autostart::plugin())
         .manage(notch::HitState::default())
         .manage(events::Outbox::default())
         .invoke_handler(tauri::generate_handler![
@@ -43,6 +50,7 @@ fn main() {
                 }
                 hoverpill_notify::Event::Unavailable(reason) => events::notify(&handle, "Notifications unavailable", &reason),
             });
+            autostart::refresh(app.handle());
             tray::init(app)?;
             Ok(())
         })

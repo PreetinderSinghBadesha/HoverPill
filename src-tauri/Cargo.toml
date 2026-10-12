@@ -19,6 +19,8 @@ httparse = "1"
 getrandom = "0.4"
 hoverpill-media = { path = "crates/media" }
 hoverpill-notify = { path = "crates/notify" }
+tauri-plugin-autostart = "2"
+tauri-plugin-single-instance = "2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }

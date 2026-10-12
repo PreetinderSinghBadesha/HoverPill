@@ -194,4 +194,13 @@ The Linux backend compiles, but I haven't run it yet.
 1. ~~Claude broker~~ (done).
 2. ~~Media: GSMTC first, then MPRIS~~ (done).
 3. ~~Notifications~~ (done; no packaging needed after all).
-4. Polish: ~~focus~~ (done), a layer-shell backend, settings (position, which monitor, notification allow-list), and autostart (`tauri-plugin-autostart`).
+4. Polish: ~~focus~~ (done), ~~autostart~~ (done), a layer-shell backend, and settings (position, which monitor, notification allow-list).
+
+**Autostart** (`src-tauri/src/autostart.rs`):
+
+- **Plugin:** `tauri-plugin-autostart` 2.x. It writes the HKCU `Run` value on Windows and an XDG autostart `.desktop` entry on Linux, under the name "HoverPill".
+- **Off by default.** It's toggled from a check item in the tray menu.
+- **Debug builds** refuse to *enable* it, because they depend on the Vite dev server. Disabling works in any build.
+- **Release builds** re-register on every launch while it's enabled, so the entry follows the executable if it moves or is reinstalled.
+- **Single instance:** `tauri-plugin-single-instance` is registered first. A second launch exits immediately, and the running copy shows "already running". This stops a manual launch after a login launch from opening a second pill and failing to bind the broker port.
+- **Not exposed to the webview:** the plugin's own JavaScript commands aren't granted in `capabilities/default.json`, so only the tray can change the setting.
