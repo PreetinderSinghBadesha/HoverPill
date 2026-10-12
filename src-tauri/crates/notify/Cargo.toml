@@ -1,0 +1,24 @@
+[package]
+name = "hoverpill-notify"
+version = "0.1.0"
+description = "Mirror other apps' desktop notifications (UserNotificationListener on Windows, D-Bus monitor on Linux)"
+edition = "2021"
+
+[dependencies]
+base64 = "0.22"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+  "ApplicationModel",
+  "Foundation",
+  "Foundation_Collections",
+  "Storage_Streams",
+  "UI_Notifications",
+  "UI_Notifications_Management",
+  "Win32_System_WinRT",
+] }
+windows-future = "0.3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = "5"
+png = "0.17"

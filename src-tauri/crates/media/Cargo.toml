@@ -1,0 +1,21 @@
+[package]
+name = "hoverpill-media"
+version = "0.1.0"
+description = "System now-playing info and transport controls (GSMTC on Windows, MPRIS on Linux)"
+edition = "2021"
+
+[dependencies]
+base64 = "0.22"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+  "Foundation",
+  "Foundation_Collections",
+  "Media_Control",
+  "Storage_Streams",
+  "Win32_System_WinRT",
+] }
+windows-future = "0.3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = "5"

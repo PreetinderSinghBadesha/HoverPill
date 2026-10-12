@@ -1,0 +1,29 @@
+[package]
+name = "hoverpill"
+version = "0.1.0"
+description = "A Dynamic Island-style smart notch for Windows and Linux"
+edition = "2021"
+
+[workspace]
+members = ["crates/media", "crates/notify"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1", features = ["net", "io-util", "time", "sync", "macros"] }
+httparse = "1"
+getrandom = "0.4"
+hoverpill-media = { path = "crates/media" }
+hoverpill-notify = { path = "crates/notify" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

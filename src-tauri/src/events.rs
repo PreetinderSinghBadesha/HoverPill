@@ -1,0 +1,136 @@
+//! Payloads pushed to the pill UI and the commands it calls back with.
+//! Keep the field names in sync with src/lib/types.ts.
+
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
+
+use hoverpill_media::{Action, Media, NowPlaying};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use tauri::{AppHandle, Emitter, Manager, State};
+
+use crate::broker::Broker;
+
+static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
+pub fn next_id(prefix: &str) -> String {
+    format!("{prefix}-{}", NEXT_ID.fetch_add(1, Ordering::Relaxed))
+}
+
+/// Events emitted before the webview has registered its listeners would be lost, so they wait
+/// here until the UI calls `pill_ready`.
+pub struct Outbox(Mutex<Option<Vec<(String, Value)>>>);
+
+impl Default for Outbox {
+    fn default() -> Self {
+        Self(Mutex::new(Some(Vec::new())))
+    }
+}
+
+/// Emits to the pill, or queues until it's listening.
+pub fn send<S: Serialize + Clone>(app: &AppHandle, event: &str, payload: S) {
+    if let Some(queue) = app.state::<Outbox>().0.lock().unwrap().as_mut() {
+        queue.push((event.to_string(), serde_json::to_value(payload).unwrap_or(Value::Null)));
+        return;
+    }
+    let _ = app.emit(event, payload);
+}
+
+#[tauri::command]
+pub fn pill_ready(app: AppHandle, outbox: State<Outbox>) {
+    let queued = outbox.0.lock().unwrap().take();
+    for (event, payload) in queued.into_iter().flatten() {
+        let _ = app.emit(&event, payload);
+    }
+}
+
+#[derive(Clone, Serialize)]
+pub struct PermissionRequest {
+    pub id: String,
+    pub tool: String,
+    pub command: String,
+    pub cwd: Option<String>,
+}
+
+/// The request went away without an answer from the pill (Claude was interrupted, or timed out).
+#[derive(Clone, Serialize)]
+pub struct PermissionCancel {
+    pub id: String,
+}
+
+#[derive(Clone, Serialize)]
+pub struct NotificationItem {
+    pub id: String,
+    pub app: String,
+    pub title: String,
+    pub body: String,
+    pub icon: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct MediaState {
+    pub title: String,
+    pub artist: String,
+    pub playing: bool,
+    pub artwork: Option<String>,
+}
+
+impl From<NowPlaying> for MediaState {
+    fn from(n: NowPlaying) -> Self {
+        Self { title: n.title, artist: n.artist, playing: n.playing, artwork: n.artwork }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Decision {
+    Allow,
+    Deny,
+    /// Hand the question back to Claude Code's own terminal prompt.
+    Ask,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MediaAction {
+    PlayPause,
+    Next,
+    Previous,
+}
+
+/// Shows a message from HoverPill itself through the notification view.
+pub fn notify(app: &AppHandle, title: &str, body: &str) {
+    send(
+        app,
+        "pill:notification",
+        NotificationItem { id: next_id("hoverpill"), app: "HoverPill".into(), title: title.into(), body: body.into(), icon: None },
+    );
+}
+
+impl From<hoverpill_notify::Notification> for NotificationItem {
+    fn from(n: hoverpill_notify::Notification) -> Self {
+        Self { id: next_id("os"), app: n.app, title: n.title, body: n.body, icon: n.icon }
+    }
+}
+
+#[tauri::command]
+pub fn resolve_permission(id: String, decision: Decision, broker: State<Broker>) {    if !broker.resolve(&id, decision) {
+        // Demo cards from the tray, or a request Claude already abandoned.
+        println!("hoverpill: no pending Claude request {id}");
+    }
+}
+
+#[tauri::command]
+pub fn media_command(action: MediaAction, media: State<Media>) {
+    media.send(match action {
+        MediaAction::PlayPause => Action::PlayPause,
+        MediaAction::Next => Action::Next,
+        MediaAction::Previous => Action::Previous,
+    });
+}
+
+/// The UI asks once on load; after that, changes arrive as `pill:media` events.
+#[tauri::command]
+pub fn current_media(media: State<Media>) -> Option<MediaState> {
+    media.current().map(MediaState::from)
+}

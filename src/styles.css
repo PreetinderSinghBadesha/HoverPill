@@ -1,0 +1,380 @@
+:root {
+  --pill: #000;
+  --text: #f5f5f7;
+  --text-2: #8e8e93;
+  --surface: #1c1c1e;
+  --surface-2: #2c2c2e;
+  --claude: #d97757;
+  --top-gap: 6px;
+  font-family: "Segoe UI Variable Text", "Segoe UI", Inter, "Noto Sans", system-ui, sans-serif;
+  font-size: 13px;
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The window is transparent; everything outside the pill must stay fully see-through. */
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+}
+
+.stage {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  height: 100%;
+  padding-top: var(--top-gap);
+  box-sizing: border-box;
+}
+
+.pill {
+  position: relative;
+  overflow: hidden;
+  background: var(--pill);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.35), inset 0 0 0 0.5px rgb(255 255 255 / 0.06);
+}
+
+.content {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  margin-inline: auto;
+  box-sizing: border-box;
+  transform-origin: top center;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.title {
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.subtitle {
+  color: var(--text-2);
+  margin-top: 2px;
+}
+
+.eyebrow {
+  color: var(--text-2);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 1px;
+}
+
+.ellipsis {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- compact media ---------- */
+
+.compact {
+  padding: 0 14px 0 6px;
+  gap: 10px;
+}
+
+.artwork {
+  border-radius: 6px;
+  flex-shrink: 0;
+  object-fit: cover;
+}
+
+.artwork.placeholder {
+  background: linear-gradient(135deg, #ff5f6d, #845ec2 55%, #2c73d2);
+}
+
+.compact .artwork {
+  border-radius: 50%;
+}
+
+.marquee {
+  flex: 1;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: 12px;
+  mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent);
+}
+
+.marquee span {
+  display: inline-block;
+  white-space: nowrap;
+  padding-left: 100%;
+  animation: marquee 12s linear infinite;
+}
+
+@keyframes marquee {
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+.visualizer {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.visualizer span {
+  width: 3px;
+  height: 4px;
+  border-radius: 2px;
+  background: #ff7a59;
+  transition: height 0.3s;
+}
+
+.visualizer.playing span {
+  animation: bar 0.9s ease-in-out infinite alternate;
+}
+
+@keyframes bar {
+  0% {
+    height: 3px;
+  }
+  50% {
+    height: 14px;
+  }
+  100% {
+    height: 6px;
+  }
+}
+
+/* ---------- expanded media / clock ---------- */
+
+.expanded {
+  padding: 0 22px 0 30px;
+  gap: 16px;
+}
+
+.expanded .artwork {
+  border-radius: 12px;
+}
+
+.expanded .visualizer {
+  align-self: flex-start;
+  margin-top: 30px;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 8px;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--text);
+  transition: background 0.15s, transform 0.1s;
+}
+
+.icon-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.icon-btn.big svg {
+  width: 24px;
+  height: 24px;
+}
+
+.icon-btn:hover {
+  background: var(--surface-2);
+}
+
+.icon-btn:active,
+.btn:active {
+  transform: scale(0.94);
+}
+
+.clock {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+}
+
+.clock .time {
+  font-size: 30px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* ---------- notification ---------- */
+
+.notification {
+  position: relative;
+  padding: 0 24px 0 16px;
+  cursor: pointer;
+}
+
+.app-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  flex-shrink: 0;
+  font-weight: 700;
+  font-size: 18px;
+  object-fit: cover;
+}
+
+.timer {
+  position: absolute;
+  left: 32px;
+  right: 32px;
+  bottom: 6px;
+  height: 2px;
+  border-radius: 1px;
+  background: rgb(255 255 255 / 0.18);
+  transform-origin: left center;
+}
+
+/* ---------- Claude permission ---------- */
+
+.permission {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 16px 20px 16px;
+  box-sizing: border-box;
+}
+
+.perm-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-2);
+}
+
+.claude-mark {
+  color: var(--claude);
+  font-size: 16px;
+}
+
+.chip {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgb(217 119 87 / 0.16);
+  color: var(--claude);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.queued {
+  margin-left: auto;
+  font-size: 11px;
+}
+
+.command {
+  flex: 1;
+  margin: 10px 0 6px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  background: var(--surface);
+  font: 12.5px/1.45 "Cascadia Code", "JetBrains Mono", Consolas, "DejaVu Sans Mono", monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow: auto;
+  user-select: text;
+}
+
+.perm-footer {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 10px;
+  color: var(--text-2);
+  font-size: 11px;
+}
+
+.cwd {
+  flex: 1;
+  min-width: 0;
+}
+
+.link {
+  padding: 0;
+  font-size: 11px;
+  color: var(--text-2);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.link:hover {
+  color: var(--text);
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.btn {
+  height: 32px;
+  border-radius: 999px;
+  font-weight: 600;
+  transition: filter 0.15s, transform 0.1s;
+}
+
+.btn:hover {
+  filter: brightness(1.15);
+}
+
+.btn.deny {
+  background: var(--surface-2);
+}
+
+.btn.approve {
+  background: var(--text);
+  color: #000;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee span,
+  .visualizer.playing span {
+    animation: none;
+  }
+}
