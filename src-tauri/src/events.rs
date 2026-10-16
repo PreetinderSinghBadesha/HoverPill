@@ -45,12 +45,51 @@ pub fn pill_ready(app: AppHandle, outbox: State<Outbox>) {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PermissionRule {
+    pub tool_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rule_content: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct PermissionUpdate {
+    pub r#type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rules: Option<Vec<PermissionRule>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub behavior: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub destination: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub directories: Option<Vec<String>>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PermissionSuggestion {
+    pub r#type: Option<String>,
+    #[serde(default)]
+    pub rules: Vec<PermissionRule>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub behavior: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub destination: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub directories: Vec<String>,
+}
+
 #[derive(Clone, Serialize)]
 pub struct PermissionRequest {
     pub id: String,
     pub tool: String,
     pub command: String,
     pub cwd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission_suggestions: Option<Vec<PermissionSuggestion>>,
 }
 
 /// The request went away without an answer from the pill (Claude was interrupted, or timed out).
@@ -92,6 +131,8 @@ pub enum Decision {
     Deny,
     /// Hand the question back to Claude Code's own terminal prompt.
     Ask,
+    #[serde(rename = "always_allow")]
+    AlwaysAllow,
 }
 
 #[derive(Debug, Deserialize)]
@@ -118,7 +159,8 @@ impl From<hoverpill_notify::Notification> for NotificationItem {
 }
 
 #[tauri::command]
-pub fn resolve_permission(id: String, decision: Decision, broker: State<Broker>) {    if !broker.resolve(&id, decision) {
+pub fn resolve_permission(id: String, decision: Decision, broker: State<Broker>) {
+    if !broker.resolve(&id, decision) {
         // Demo cards from the tray, or a request Claude already abandoned.
         println!("hoverpill: no pending Claude request {id}");
     }

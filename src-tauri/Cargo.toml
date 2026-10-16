@@ -30,7 +30,11 @@ base64 = "0.22"
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
+# GTK/GDK for shaping the X input region under XWayland (see `set_input_region` in notch.rs).
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
 
 [profile.release]
 lto = true

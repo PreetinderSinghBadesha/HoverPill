@@ -39,11 +39,18 @@ struct HookInput {
     #[serde(default)]
     tool_input: Value,
     cwd: Option<String>,
+    #[serde(default)]
+    permission_suggestions: Vec<events::PermissionSuggestion>,
 }
 
 pub struct Broker {
     token: String,
-    pending: Mutex<HashMap<String, oneshot::Sender<Decision>>>,
+    pending: Mutex<HashMap<String, Pending>>,
+}
+
+struct Pending {
+    tx: oneshot::Sender<Decision>,
+    req: PermissionRequest,
 }
 
 impl Broker {
@@ -59,15 +66,19 @@ impl Broker {
     /// Returns false if the request already went away (answered, timed out, or cancelled).
     pub fn resolve(&self, id: &str, decision: Decision) -> bool {
         match self.pending.lock().unwrap().remove(id) {
-            Some(tx) => tx.send(decision).is_ok(),
+            Some(pending) => pending.tx.send(decision).is_ok(),
             None => false,
         }
     }
 
-    fn register(&self) -> (String, oneshot::Receiver<Decision>) {
-        let id = events::next_id("claude");
+    fn get_request(&self, id: &str) -> Option<PermissionRequest> {
+        self.pending.lock().unwrap().get(id).map(|p| p.req.clone())
+    }
+
+    fn register(&self, req: PermissionRequest) -> (String, oneshot::Receiver<Decision>) {
+        let id = req.id.clone();
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().unwrap().insert(id.clone(), tx);
+        self.pending.lock().unwrap().insert(id.clone(), Pending { tx, req });
         (id, rx)
     }
 
@@ -159,39 +170,75 @@ async fn handle(app: &AppHandle, mut stream: TcpStream) -> std::io::Result<()> {
         Err(e) => return http::respond(&mut stream, 400, "text/plain", e.to_string().as_bytes()).await,
     };
 
-    let (id, decision) = broker.register();
     let summary = summary::summarize(&input.tool_name, &input.tool_input);
-    events::send(app, "pill:permission", PermissionRequest { id: id.clone(), tool: summary.tool, command: summary.text, cwd: input.cwd });
-
-    let decision = tokio::select! {
+    let suggestions = if input.permission_suggestions.is_empty() { None } else { Some(input.permission_suggestions) };
+    let req = PermissionRequest { id: events::next_id("claude"), tool: summary.tool, command: summary.text, cwd: input.cwd, permission_suggestions: suggestions };
+    let req_for_send = req.clone();
+    let (id, decision) = broker.register(req.clone());
+    events::send(app, "pill:permission", req_for_send);
+    let decision_result = tokio::select! {
         d = decision => d.unwrap_or(Decision::Ask),
         // The user interrupted Claude (or it timed out): nobody is listening for an answer.
         _ = http::closed(&mut stream) => {
             broker.forget(&id);
-            events::send(app, "pill:permission-cancel", PermissionCancel { id });
+            events::send(app, "pill:permission-cancel", PermissionCancel { id: id.clone() });
             return Ok(());
         }
         _ = tokio::time::sleep(DECISION_TIMEOUT) => {
             broker.forget(&id);
-            events::send(app, "pill:permission-cancel", PermissionCancel { id });
+            events::send(app, "pill:permission-cancel", PermissionCancel { id: id.clone() });
             Decision::Ask
         }
     };
 
-    match hook_response(&decision) {
+    let pending_req = broker.get_request(&id);
+    match hook_response(&decision_result, &pending_req.unwrap_or(req)) {
         Some(body) => http::respond(&mut stream, 200, "application/json", body.to_string().as_bytes()).await,
         // An empty 2xx is "no decision": Claude Code shows its usual terminal prompt.
         None => http::respond(&mut stream, 200, "text/plain", b"").await,
     }
 }
 
-fn hook_response(decision: &Decision) -> Option<Value> {
-    let decision = match decision {
-        Decision::Allow => json!({ "behavior": "allow" }),
-        Decision::Deny => json!({ "behavior": "deny", "message": DENY_MESSAGE }),
-        Decision::Ask => return None,
-    };
-    Some(json!({ "hookSpecificOutput": { "hookEventName": "PermissionRequest", "decision": decision } }))
+fn hook_response(decision: &Decision, request: &PermissionRequest) -> Option<Value> {
+    match decision {
+        Decision::Allow => {
+            Some(json!({ "hookSpecificOutput": { "hookEventName": "PermissionRequest", "decision": { "behavior": "allow" } } }))
+        }
+        Decision::Deny => {
+            Some(json!({ "hookSpecificOutput": { "hookEventName": "PermissionRequest", "decision": { "behavior": "deny", "message": DENY_MESSAGE } } }))
+        }
+        Decision::Ask => None,
+        Decision::AlwaysAllow => {
+            // Find the best suggestion - prefer addRules with allow behavior
+            let mut updated_permissions = None;
+            if let Some(ref suggestions) = request.permission_suggestions {
+                for s in suggestions {
+                    if s.behavior.as_deref() == Some("allow") && s.r#type.as_deref() == Some("addRules") {
+                        updated_permissions = Some(json!([s]));
+                        break;
+                    }
+                }
+                if updated_permissions.is_none() && !suggestions.is_empty() {
+                    // Just take the first suggestion if it's allow type
+                    for s in suggestions {
+                        if s.behavior.as_deref() == Some("allow") {
+                            updated_permissions = Some(json!([s]));
+                            break;
+                        }
+                    }
+                }
+            }
+            Some(json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PermissionRequest",
+                    "decision": {
+                        "behavior": "allow",
+                        "updatedPermissions": updated_permissions
+                    }
+                }
+            }))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -204,15 +251,16 @@ mod tests {
 
     #[test]
     fn responses_match_hook_schema() {
-        let allow = hook_response(&Decision::Allow).unwrap();
+        let req = PermissionRequest { id: "t".into(), tool: "Bash".into(), command: "echo".into(), cwd: None, permission_suggestions: None };
+        let allow = hook_response(&Decision::Allow, &req).unwrap();
         assert_eq!(allow["hookSpecificOutput"]["hookEventName"], "PermissionRequest");
         assert_eq!(allow["hookSpecificOutput"]["decision"], json!({ "behavior": "allow" }));
 
-        let deny = hook_response(&Decision::Deny).unwrap();
+        let deny = hook_response(&Decision::Deny, &req).unwrap();
         assert_eq!(deny["hookSpecificOutput"]["decision"]["behavior"], "deny");
         assert_eq!(deny["hookSpecificOutput"]["decision"]["message"], DENY_MESSAGE);
 
-        assert!(hook_response(&Decision::Ask).is_none());
+        assert!(hook_response(&Decision::Ask, &req).is_none());
     }
 
     #[test]
@@ -228,7 +276,8 @@ mod tests {
     #[test]
     fn resolve_delivers_once() {
         let b = broker("t");
-        let (id, mut rx) = b.register();
+        let dummy = PermissionRequest { id: "t".into(), tool: "Bash".into(), command: "echo".into(), cwd: None, permission_suggestions: None };
+        let (id, mut rx) = b.register(dummy);
         assert!(b.resolve(&id, Decision::Deny));
         assert!(matches!(rx.try_recv(), Ok(Decision::Deny)));
         assert!(!b.resolve(&id, Decision::Allow), "a second answer must be ignored");

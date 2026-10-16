@@ -9,6 +9,8 @@ mod events;
 mod notch;
 mod settings;
 mod tray;
+#[cfg(windows)]
+mod winvd;
 
 use tauri::Manager;
 
@@ -34,6 +36,7 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| settings::open_window(app)))
         .plugin(autostart::plugin())
         .manage(notch::HitState::default())
+        .manage(notch::HoverState::default())
         .manage(events::Outbox::default())
         .invoke_handler(tauri::generate_handler![
             notch::set_hit_rect,
@@ -77,8 +80,11 @@ fn main() {
                 .get_webview_window(notch::LABEL)
                 .ok_or("pill window missing from tauri.conf.json")?;
             notch::place_top_center(&pill)?;
-            pill.set_ignore_cursor_events(true)?;
+            // Show first: on Linux the GTK window has no gdk surface until it's realized, and
+            // set_ignore_cursor_events would panic on the missing surface. Windows is fine either
+            // way.
             pill.show()?;
+            pill.set_ignore_cursor_events(true)?;
             notch::spawn_hit_test_loop(pill);
 
             app.manage(broker::Broker::load(app.handle())?);

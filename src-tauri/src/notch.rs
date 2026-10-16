@@ -8,8 +8,11 @@
 //! (if enabled) rest the pointer on it for a moment.
 //!
 //! A background thread polls the global cursor because a click-through window receives no
-//! mouse events at all; the webview reports the notch's box and whether it's interactive via
-//! `set_hit_rect`, and is told to open or close via `pill:hover`.
+//! mouse events. On Windows that poll is how hover is detected. On Linux the window shapes its
+//! own X input region to the notch (see `set_input_region`) and the GTK enter/leave signals are
+//! used instead: under XWayland the global cursor freezes the moment the real pointer leaves that
+//! region, so polling would strand the notch open. Either way the webview reports the notch's box
+//! and whether it's interactive via `set_hit_rect`, and is told to open or close via `pill:hover`.
 
 use std::error::Error;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -51,7 +54,7 @@ const FULLSCREEN_CHECK_EVERY: u64 = 20;
 const RESERVED_HEIGHT: f64 = 32.0;
 
 /// The notch's box in CSS px, relative to the window's top-left corner.
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 pub struct Rect {
     x: f64,
     y: f64,
@@ -85,6 +88,12 @@ pub fn notch_typing(active: bool, app: AppHandle, state: State<HitState>) {
 pub fn set_hit_rect(rect: Rect, interactive: bool, state: State<HitState>) {
     *state.shape.lock().unwrap() = Some((rect, interactive));
 }
+
+/// Whether the pointer is over the notch. On Linux this is driven by the window's GTK
+/// enter/leave signals (see `set_input_region`): under XWayland the global cursor Rust polls
+/// freezes the moment the real pointer leaves the notch's X input region.
+#[derive(Default)]
+pub struct HoverState(#[cfg_attr(not(target_os = "linux"), allow(dead_code))] pub AtomicBool);
 
 /// The monitor chosen in settings, falling back to the primary one if it's unplugged.
 fn chosen_monitor(win: &WebviewWindow, wanted: Option<&str>) -> Result<Monitor, Box<dyn Error>> {
@@ -227,10 +236,107 @@ fn read_pointer(win: &WebviewWindow, geo: &Geometry) -> Pointer {
     // its centre: easy to hit without aiming.
     let centre = r.x + r.width / 2.0;
     let within_edge_zone = (x - centre).abs() <= (r.width / 2.0 + HIT_PADDING).max(EDGE_HALF_WIDTH);
+    // Pushing against the pill's own top edge.
+    let at_window_top = cursor.y - geo.origin.y as f64 <= EDGE_PX && cursor.y >= geo.origin.y as f64;
+    // On Linux the window manager (e.g. GNOME) keeps the pill below the top bar, so its top edge
+    // is lower than the screen's. The README promises opening by pushing against "the top edge of
+    // the screen", so also fire from the monitor's own top edge there.
+    #[cfg(target_os = "linux")]
+    let at_edge = within_edge_zone
+        && (at_window_top || (cursor.y - geo.monitor.1 as f64 <= EDGE_PX && cursor.y >= geo.monitor.1 as f64));
+    #[cfg(not(target_os = "linux"))]
+    let at_edge = within_edge_zone && at_window_top;
     Pointer {
         over: within_x && y >= r.y - HIT_PADDING && y <= r.y + r.height + HIT_PADDING,
-        at_edge: within_edge_zone && cursor.y - geo.origin.y as f64 <= EDGE_PX && cursor.y >= geo.origin.y as f64,
+        at_edge,
         interactive,
+    }
+}
+
+/// Linux/XWayland only: shape the window's X *input* region to the notch's own box so the X
+/// server actually delivers pointer motion to us there.
+///
+/// A fully click-through window receives no cursor updates, so under XWayland a real mouse can
+/// never be seen near the top: `cursor_position()` just returns wherever the pointer last left an
+/// X surface. Shaping the input region (XShape) to the notch's box makes that box a real X
+/// surface for the pointer, so hovering it and pushing its top edge work with a real mouse, while
+/// everywhere else in the window stays click-through. `None` sets an empty region (fully
+/// click-through). GTK must be touched on the main thread, so this hops there; the rect is in
+/// window coordinates (GDK scales to device pixels itself, matching `read_pointer`).
+#[cfg(target_os = "linux")]
+fn set_input_region(win: &WebviewWindow, rect: Option<Rect>) {
+    let win = win.clone();
+    let handle = win.clone();
+    let _ = handle.run_on_main_thread(move || {
+        use gtk::prelude::*;
+        let Ok(gtk_win) = win.gtk_window() else { return };
+        let Some(gdk_win) = gtk_win.window() else { return };
+        if !HOVER_SIGNALS_CONNECTED.swap(true, Ordering::Relaxed) {
+            // GTK's own crossing events are the authoritative hover signal on Linux: X delivers
+            // Enter/LeaveNotify from real pointer motion at the input-region boundary, whereas the
+            // cursor Tauri polls (`XQueryPointer`) freezes the moment the real pointer leaves it.
+            let app = win.app_handle().clone();
+            gtk_win.connect_enter_notify_event(move |_, _| {
+                if let Some(s) = app.try_state::<HoverState>() {
+                    s.0.store(true, Ordering::Relaxed);
+                }
+                gtk::glib::Propagation::Proceed
+            });
+            let app = win.app_handle().clone();
+            gtk_win.connect_leave_notify_event(move |_, _| {
+                if let Some(s) = app.try_state::<HoverState>() {
+                    s.0.store(false, Ordering::Relaxed);
+                }
+                gtk::glib::Propagation::Proceed
+            });
+        }
+        let region = match rect {
+            Some(r) => gtk::gdk::cairo::Region::create_rectangle(&gtk::gdk::cairo::RectangleInt::new(
+                r.x.round() as i32,
+                r.y.round() as i32,
+                r.width.round().max(1.0) as i32,
+                r.height.round().max(1.0) as i32,
+            )),
+            None => gtk::gdk::cairo::Region::create(),
+        };
+        gdk_win.input_shape_combine_region(&region, 0, 0);
+    });
+}
+
+#[cfg(target_os = "linux")]
+static HOVER_SIGNALS_CONNECTED: AtomicBool = AtomicBool::new(false);
+
+/// The all-workspaces state we last applied on Linux (-1 = not applied yet), so the hit-test loop
+/// keeps re-asking until the GTK window exists (`stick` is a no-op before it's realized).
+#[cfg(target_os = "linux")]
+static STICKY_STATE: std::sync::atomic::AtomicI8 = std::sync::atomic::AtomicI8::new(-1);
+
+/// Keeps the pill on every virtual desktop / workspace. Linux asks the window manager to make the
+/// window sticky (`_NET_WM_STATE_STICKY` via GDK); Windows pins the window's view (`winvd`).
+/// Best-effort: on a platform/desktop that can't do it, the pill just stays on the current one.
+pub fn set_all_workspaces(win: &WebviewWindow, all: bool) {
+    #[cfg(target_os = "linux")]
+    {
+        let win = win.clone();
+        let handle = win.clone();
+        let _ = handle.run_on_main_thread(move || {
+            use gtk::prelude::*;
+            // Nothing to do until the GTK window is realized; the loop calls us again until then.
+            let Ok(gtk_win) = win.gtk_window() else { return };
+            let Some(gdk_win) = gtk_win.window() else { return };
+            if all {
+                gdk_win.stick();
+            } else {
+                gdk_win.unstick();
+            }
+            STICKY_STATE.store(if all { 1 } else { 0 }, Ordering::Relaxed);
+        });
+    }
+    #[cfg(windows)]
+    crate::winvd::set_view_on_all_desktops(all, native_handle(win));
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        let _ = (win, all);
     }
 }
 
@@ -266,12 +372,19 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
     std::thread::spawn(move || {
         let mut geo = Geometry::read(&win);
         let mut open = false;
+        #[cfg(not(target_os = "linux"))]
         let mut accepting_input = false;
         let mut resting_since: Option<Instant> = None;
         let mut display = Display::default();
         let mut fullscreen = false;
         let mut peek = false;
         let mut focus = FocusGuard::default();
+        // Linux: follow the reported notch box as the X input region; start fully click-through.
+        #[cfg(target_os = "linux")]
+        let mut last_region: Option<Rect> = None;
+        #[cfg(target_os = "linux")]
+        set_input_region(&win, None);
+        #[cfg(not(target_os = "linux"))]
         let _ = win.set_ignore_cursor_events(true);
         let mut ticks: u64 = 0;
         loop {
@@ -288,6 +401,12 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
                 if let Some(store) = win.try_state::<SettingsStore>() {
                     display = store.get().display;
                 }
+                // Linux: apply once the GTK window is realized, and re-apply on every change. The
+                // startup call in `setup` runs before the window exists, so this is the real one.
+                #[cfg(target_os = "linux")]
+                if STICKY_STATE.load(Ordering::Relaxed) != i8::from(display.all_workspaces) {
+                    set_all_workspaces(&win, display.all_workspaces);
+                }
             }
 
             if tick.is_multiple_of(FULLSCREEN_CHECK_EVERY) {
@@ -299,6 +418,14 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
             }
 
             let p = geo.as_ref().map(|g| read_pointer(&win, g)).unwrap_or_default();
+            // Linux: the window's GTK enter/leave signal is authoritative (see `HoverState`); the
+            // polled cursor sticks at the input region's edge once the real pointer leaves it.
+            #[cfg(target_os = "linux")]
+            let p = {
+                let mut p = p;
+                p.over = win.state::<HoverState>().0.load(Ordering::Relaxed);
+                p
+            };
             if !p.over || p.interactive {
                 resting_since = None;
             } else if resting_since.is_none() {
@@ -310,6 +437,15 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
             // Closed: only the top-edge push or a long rest opens it; it never takes clicks.
             // Behind a fullscreen app, nothing opens it (video players put their controls at the
             // top edge too).
+            // Under XWayland the pill owns its own input region (see `set_input_region`), so a real
+            // cursor over the closed pill is a genuine hover: open on it directly. On Windows the
+            // pill stays click-through when closed, so hovering it can't be detected and the
+            // top-edge push / dwell are the only triggers.
+            #[cfg(target_os = "linux")]
+            let hover_open = p.over;
+            #[cfg(not(target_os = "linux"))]
+            let hover_open = false;
+
             let typing = win.state::<HitState>().typing.load(Ordering::Relaxed);
             let want_open = if typing {
                 true
@@ -318,7 +454,7 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
             } else if fullscreen {
                 false
             } else {
-                p.at_edge || (display.open_on_hover && rested)
+                p.at_edge || hover_open || (display.open_on_hover && rested)
             };
             if want_open != open {
                 open = want_open;
@@ -335,10 +471,24 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
                 let _ = win.emit("pill:peek", peek);
             }
 
-            let want_input = p.interactive && p.over;
-            if want_input != accepting_input {
-                accepting_input = want_input;
-                let _ = win.set_ignore_cursor_events(!want_input);
+            // Linux: keep the X input region on the reported notch box so a real cursor is seen
+            // over the pill (and its clicks land on us) while everything else stays click-through.
+            #[cfg(target_os = "linux")]
+            {
+                let rect = win.state::<HitState>().shape.lock().unwrap().map(|(r, _)| r);
+                if rect != last_region || tick % SLOW_TICK_EVERY == 0 {
+                    last_region = rect;
+                    set_input_region(&win, rect);
+                }
+            }
+            // Windows: the cursor is always readable, so a plain all-or-nothing toggle is fine.
+            #[cfg(not(target_os = "linux"))]
+            {
+                let want_input = p.interactive && p.over;
+                if want_input != accepting_input {
+                    accepting_input = want_input;
+                    let _ = win.set_ignore_cursor_events(!want_input);
+                }
             }
             if !typing {
                 focus.give_back_if_taken(&win);

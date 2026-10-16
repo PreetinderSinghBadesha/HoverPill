@@ -37,6 +37,8 @@ pub struct Display {
     /// Reserve a strip at the top of the monitor (like a taskbar) so maximised windows start
     /// below the notch. Windows only.
     pub reserve_space: bool,
+    /// Show the pill on every virtual desktop / workspace, not just the one it was opened on.
+    pub all_workspaces: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -91,6 +93,7 @@ impl Default for Display {
             compact_idle: true,
             hide_in_fullscreen: true,
             reserve_space: false,
+            all_workspaces: true,
         }
     }
 }
@@ -208,6 +211,7 @@ pub fn apply(app: &AppHandle, settings: &Settings) {
         if let Err(e) = crate::notch::place_top_center(&pill) {
             eprintln!("hoverpill: placement failed: {e}");
         }
+        crate::notch::set_all_workspaces(&pill, settings.display.all_workspaces);
     }
     let _ = app.emit("settings:changed", settings);
 }
@@ -341,6 +345,7 @@ mod tests {
         assert_eq!(s.display.top_offset, 0.0);
         assert!(!s.display.open_on_hover && s.display.compact_idle && s.display.hide_in_fullscreen);
         assert!(!s.display.reserve_space);
+        assert!(s.display.all_workspaces);
         assert!(s.notifications.enabled);
     }
 

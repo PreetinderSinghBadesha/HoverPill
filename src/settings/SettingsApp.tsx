@@ -238,6 +238,12 @@ function DisplayTab({ settings, update }: { settings: Settings; update: Update }
           disabled={!IS_WINDOWS}
           onChange={(reserveSpace) => setDisplay({ reserveSpace })}
         />
+        <SwitchRow
+          title="Show on every virtual desktop"
+          description="Keep the pill visible when you switch desktops, instead of only on the one it was opened on."
+          checked={d.allWorkspaces}
+          onChange={(allWorkspaces) => setDisplay({ allWorkspaces })}
+        />
       </Section>
       <Section title="Size">
         <SliderRow
