@@ -1,5 +1,7 @@
 # Checks every push to main and every pull request: the interface type-checks and builds, the
-# Rust code passes clippy with warnings treated as errors, and the tests pass.
+# Rust code passes clippy with warnings treated as errors, and the tests pass. Both platforms are
+# checked, so the Linux-only code (D-Bus notifications, MPRIS media, X11 placement) is compiled
+# and linted too.
 name: CI
 
 on:
@@ -34,6 +36,54 @@ jobs:
         run: npm run typecheck
 
       # Also produces dist/, which the Rust build embeds.
+      - name: Build the interface
+        run: npm run build
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Clippy
+        working-directory: src-tauri
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Tests
+        working-directory: src-tauri
+        run: cargo test --workspace --locked
+
+  linux:
+    name: Build and test (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Tauri's Linux prerequisites, plus the X11 and D-Bus development headers the Linux-only
+      # code (X input region, X11 placement, MPRIS media, notifications) needs to compile.
+      - name: Install Tauri's Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libgtk-3-dev \
+            libx11-dev \
+            libdbus-1-dev \
+            pkg-config
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # The Rust build embeds dist/, so the interface must be built before clippy or the tests.
       - name: Build the interface
         run: npm run build
 

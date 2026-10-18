@@ -1,5 +1,6 @@
-# Builds the Windows installer when a version tag is pushed, and attaches it to a draft release
-# for that tag. Write the notes on GitHub, then publish the draft.
+# Builds the Windows installer and the Linux packages (.deb and AppImage) when a version tag is
+# pushed, and attaches them all to one draft release for that tag. Write the notes on GitHub,
+# then publish the draft.
 #
 #   1. Bump the version in package.json, src-tauri/Cargo.toml and src-tauri/tauri.conf.json.
 #   2. Commit, then: git tag v0.3.0 && git push origin v0.3.0
@@ -47,13 +48,72 @@ jobs:
 
       - name: Build and attach the installer
         uses: tauri-apps/tauri-action@v1
-        env:
+        env: &release-env
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOVERPILL_GOOGLE_CLIENT_ID: ${{ secrets.HOVERPILL_GOOGLE_CLIENT_ID }}
           HOVERPILL_GOOGLE_CLIENT_SECRET: ${{ secrets.HOVERPILL_GOOGLE_CLIENT_SECRET }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: HoverPill __VERSION__
-          releaseBody: "Download HoverPill___VERSION___x64-setup.exe below and run it. It installs for your user account, with no admin rights needed. If Windows SmartScreen stops it, choose More info, then Run anyway."
+          releaseBody: &release-body |-
+            **Windows:** download HoverPill ___VERSION___ x64-setup.exe below and run it. It installs for your user account, with no admin rights needed. If Windows SmartScreen stops it, choose More info, then Run anyway.
+
+            **Linux:** download the `.AppImage` (make it executable with `chmod +x`, then run it) or the `.deb`. Linux support is new — if something doesn't work, please open an issue.
+          releaseDraft: true
+          prerelease: false
+
+  linux:
+    name: Linux packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check the tag matches the app version
+        run: |
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          if [ "v$version" != "${{ github.ref_name }}" ]; then
+            echo "Tag ${{ github.ref_name }} doesn't match the app version $version in tauri.conf.json." >&2
+            exit 1
+          fi
+
+      - name: Install Tauri's Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libgtk-3-dev \
+            libx11-dev \
+            libdbus-1-dev \
+            libxdo-dev \
+            patchelf \
+            file \
+            wget \
+            pkg-config
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install
+        run: npm ci
+
+      # Bundles deb and AppImage (see src-tauri/tauri.linux.conf.json) and adds them to the
+      # same draft release the Windows job creates.
+      - name: Build and attach the packages
+        uses: tauri-apps/tauri-action@v1
+        env: *release-env
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: HoverPill __VERSION__
+          releaseBody: *release-body
           releaseDraft: true
           prerelease: false

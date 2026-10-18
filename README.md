@@ -11,9 +11,18 @@ Built with Tauri 2 (Rust), React, and Motion. See [docs/ARCHITECTURE.md](docs/AR
 
 ## Install
 
-Download the latest installer from [GitHub Releases](https://github.com/PreetinderSinghBadesha/HoverPill/releases/latest) and run it. Each release lists what's new, and earlier versions are on the [releases page](https://github.com/PreetinderSinghBadesha/HoverPill/releases).
+Download the latest release from [GitHub Releases](https://github.com/PreetinderSinghBadesha/HoverPill/releases/latest). Each release lists what's new, and earlier versions are on the [releases page](https://github.com/PreetinderSinghBadesha/HoverPill/releases).
 
-The installer isn't code-signed yet, so Windows SmartScreen may stop it: choose **More info**, then **Run anyway**.
+**Windows:** run `HoverPill_<version>_x64-setup.exe`. It isn't code-signed yet, so SmartScreen may stop it: choose **More info**, then **Run anyway**.
+
+**Linux:** each release also has a `.deb` and an AppImage. Install the `.deb` with your package manager, or make the AppImage executable and run it:
+
+```bash
+chmod +x HoverPill_<version>_amd64.AppImage
+./HoverPill_<version>_amd64.AppImage
+```
+
+On a Wayland session HoverPill runs through XWayland (`GDK_BACKEND=x11`), because a normal Wayland client can't position itself at the top edge or read the pointer. Native Wayland is on the roadmap.
 
 ### Build the installer yourself
 
@@ -21,7 +30,9 @@ The installer isn't code-signed yet, so Windows SmartScreen may stop it: choose 
 npm run tauri build
 ```
 
-This produces `src-tauri/target/release/bundle/nsis/HoverPill_<version>_x64-setup.exe`, a 3 MB per-user installer. It needs no admin rights, adds HoverPill to the Start menu, and puts an uninstaller under Windows Settings › Apps. The release build uses about 40 MB of memory.
+On Windows this produces `src-tauri/target/release/bundle/nsis/HoverPill_<version>_x64-setup.exe`, a 3 MB per-user installer. It needs no admin rights, adds HoverPill to the Start menu, and puts an uninstaller under Windows Settings › Apps.
+
+On Linux it produces a `.deb` and an AppImage under `src-tauri/target/release/bundle/`. The release build uses about 40 MB of memory.
 
 While the installed HoverPill is running, `npm run tauri dev` can't start a second copy. Only one HoverPill runs at a time, so the dev build just opens the installed copy's Settings and exits. Quit the installed one from its tray icon first.
 
@@ -31,7 +42,7 @@ Prerequisites:
 
 - Rust (stable) and Node 20+.
 - **Windows:** WebView2, which ships with Windows 11.
-- **Linux:** `libwebkit2gtk-4.1-dev`, `libayatana-appindicator3-dev`, and a compositing window manager.
+- **Linux:** `libwebkit2gtk-4.1-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`, `libgtk-3-dev`, `libx11-dev`, `libdbus-1-dev`, and a compositing window manager.
 
 ```bash
 npm install
@@ -41,6 +52,7 @@ npm run tauri dev
 **Using the notch.** It sits flat against the top edge of the screen, like a laptop's camera notch.
 
 - **When it's closed, clicks go straight through it** to whatever is underneath, so browser tabs and title bars stay usable.
+  - **On Linux** this is different: to let a real mouse hover the notch under XWayland, the closed notch keeps the pointer over its own box, so hovering it opens it and a click on it lands on the notch instead of the window below. Everywhere else on the window still passes clicks through. On Windows a closed notch always passes clicks through.
 - **To open it,** push the pointer against the top edge of the screen above the notch.
 - **Staying out of the way:**
   - Pointing at the closed notch fades it out so you can see what's underneath.
@@ -64,7 +76,7 @@ The pill has no taskbar entry. Use the **tray icon** to open **Settings…**, to
 | Tab | What's there |
 |---|---|
 | General | Start at login, version |
-| Display | Which monitor, distance from the top edge (0 = attached notch, more = floating pill), size (80–140%), open on rest, shrink when idle, hide during fullscreen, keep windows below the notch |
+| Display | Which monitor, distance from the top edge (0 = attached notch, more = floating pill), size (80–140%), open on rest, shrink when idle, hide during fullscreen, keep windows below the notch, show on every virtual desktop |
 | Notifications | On/off, how long each card stays (2–15 s), per-app on/off: apps that recently sent notifications, plus every other app Windows lets notify |
 | Media | On/off, per-player on/off (e.g. hide a browser so the pill shows Spotify) |
 
@@ -109,11 +121,11 @@ To work on the UI in a normal browser, run `npm run dev` and open http://localho
 
 1. Bump the version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`, and commit.
 2. Tag and push: `git tag v0.3.0 && git push origin v0.3.0`.
-3. The [Release workflow](.github/workflows/release.yml) builds the Windows installer and attaches it to a draft release for that tag. Add the notes on GitHub, then publish it.
+3. The [Release workflow](.github/workflows/release.yml) builds the Windows installer and the Linux `.deb` and AppImage, and attaches them all to one draft release for that tag. Add the notes on GitHub, then publish it.
 
 The workflow refuses a tag that doesn't match the version in `tauri.conf.json`. To build a Google sign-in client into releases, so people can connect Google Calendar without making their own, add `HOVERPILL_GOOGLE_CLIENT_ID` and `HOVERPILL_GOOGLE_CLIENT_SECRET` as repository secrets.
 
-[CI](.github/workflows/ci.yml) type-checks and builds the interface, runs clippy with warnings as errors, and runs the tests on every push and pull request. Dependabot opens weekly pull requests for npm, Cargo and Actions updates.
+[CI](.github/workflows/ci.yml) type-checks and builds the interface, then runs clippy with warnings as errors and the tests on Windows **and** Linux, on every push and pull request. Dependabot opens weekly pull requests for npm, Cargo and Actions updates.
 
 ## Layout
 
@@ -126,7 +138,8 @@ src/                     React UI
   lib/usePillState.ts    event-driven state and view priority
   lib/bridge.ts          Tauri events and commands (no-ops in a plain browser)
 src-tauri/src/
-  notch.rs               placement, always-on-top, cursor-polled click-through
+  notch.rs               placement, always-on-top, click-through / X input region
+  winvd.rs               Windows: pin the pill to every virtual desktop (best-effort)
   broker/mod.rs          Claude Code permission broker (local HTTP server, pending decisions)
   broker/summary.rs      tool_input → readable card text
   broker/install.rs      add/remove the hook in ~/.claude/settings.json
@@ -143,6 +156,6 @@ src/settings/            the tabbed Settings window (settings.html)
 
 | | |
 |---|---|
-| ✅ Done | Floating window, selective click-through, spring animations, all views, Claude permission broker, media controller, notification stream, never steals focus, start at login, single instance, tabbed Settings window |
-| 🧪 Untested | Everything on Linux (it compiles but has never run) |
+| ✅ Done | Floating window, selective click-through, spring animations, all views, Claude permission broker, media controller, notification stream, never steals focus, start at login, single instance, tabbed Settings window, Linux (XWayland) support with `.deb` and AppImage builds |
+| 🧪 Untested | "Show on every virtual desktop" on Windows (off by default there), and everything under a native Wayland session |
 | 🔜 Next | Wayland layer-shell (see the architecture doc) |

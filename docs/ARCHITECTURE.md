@@ -33,6 +33,9 @@
      - **Interactive:** it takes input while the pointer is over it and closes when the pointer leaves.
 
   Rust has to decide all of this because a click-through window gets no DOM mouse events at all.
+
+  - **Linux/XWayland.** A fully click-through X window receives no pointer motion at all: `XQueryPointer` freezes the moment the real pointer leaves the last X surface, so polling can't see a hover. The loop instead shapes the window's X *input* region to the notch's own box (`set_input_region`), which makes that box a real surface the pointer can enter, and drives hover from GTK `enter-notify`/`leave-notify`. The trade-off is that the closed notch now catches clicks over its own box (it opens on hover instead of handing the click through); everywhere else on the window stays click-through. While a fullscreen app covers the monitor the region is cleared, so nothing is intercepted.
+  - **Typing.** When the ChatGPT tab's text box holds focus (`notch_typing`), the notch takes keyboard focus and stays open regardless of the pointer, and the input region is kept so the box receives clicks.
 - **Measured on Windows:**
   - Resting on the closed notch: click-through for the first 644 ms (600 ms dwell plus UI latency), then open.
   - Pushed against the top edge: open within 350 ms.
@@ -41,7 +44,7 @@
 - **Staying out of the way** (the closed notch otherwise hides whatever is under it, e.g. browser tab titles):
   - *Fade.* Rust emits `pill:peek` while the pointer is over the closed notch, and the notch drops to 12% opacity. "Open on rest" now defaults to off, because the two would fight; when it's on, the fade is skipped.
   - *Idle bar.* With nothing playing and no card, the notch is a 120×6 bar. The top-edge trigger stays at least ±110 px wide around its centre so the bar is still easy to open.
-  - *Fullscreen.* Every ~0.3 s the loop checks whether the foreground window covers the notch's monitor. The desktop, the taskbar and maximised windows (`IsZoomed`) don't count: with an auto-hiding taskbar a maximised window covers the whole monitor too, and the first version mistook those for fullscreen apps. While a fullscreen app is up, the notch is hidden and the edge push and rest don't open it, but Claude permission cards still show. Linux has no check yet.
+  - *Fullscreen.* Every ~0.3 s the loop checks whether the foreground window covers the notch's monitor. The desktop, the taskbar and maximised windows (`IsZoomed`) don't count: with an auto-hiding taskbar a maximised window covers the whole monitor too, and the first version mistook those for fullscreen apps. While a fullscreen app is up, the notch is hidden and the edge push and rest don't open it, but Claude permission cards still show. On Linux the same tick reads X11's `_NET_ACTIVE_WINDOW` and `_NET_WM_STATE_FULLSCREEN` (through `x11-dl`) and checks the window reaches the monitor edges; the description of "fullscreen" matches the Windows one (a marked-fullscreen window, not a maximised one).
   - *Reserved strip* (`appbar.rs`, opt-in, Windows only). The notch window is registered as a top AppBar (`ABM_NEW`, `ABM_QUERYPOS`, `ABM_SETPOS`) for the closed notch's height plus the top gap, so the work area shrinks and maximised windows start below. AppBars always span the full monitor width. The strip is re-synced on every placement pass and released (`ABM_REMOVE`) when the setting is turned off or the app exits (`RunEvent::Exit`).
   - *Measured on Windows (125% scaling, auto-hiding taskbar):*
     - Work area top went 0 → 40 with the strip on, and back to 0 after quitting.
