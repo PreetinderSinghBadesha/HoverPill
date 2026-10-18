@@ -168,6 +168,13 @@ async fn verify_id_token(id_token: &str, client_id: &str, nonce: &str) -> Result
         return Err(fail(&"key set is on an unexpected host"));
     }
     let keys: JwkSet = http().get(jwks_uri).send().await.map_err(|e| fail(&e))?.json().await.map_err(|e| fail(&e))?;
+    check_id_token(id_token, &keys, client_id, nonce)
+}
+
+/// The offline half of `verify_id_token`: signature against the key set, then issuer, audience,
+/// expiry and nonce.
+fn check_id_token(id_token: &str, keys: &JwkSet, client_id: &str, nonce: &str) -> Result<Value, String> {
+    let fail = |e: &dyn std::fmt::Display| format!("couldn't verify the sign-in: {e}");
     let header = decode_header(id_token).map_err(|e| fail(&e))?;
     let jwk = match &header.kid {
         Some(kid) => keys.find(kid),
@@ -510,12 +517,52 @@ pub fn chatgpt_open_usage() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
 
     #[test]
     fn host_ids_are_v4_uuids() {
         let id = uuid_v4();
         assert_eq!(id.len(), 36);
         assert_eq!(&id[14..15], "4");
+    }
+
+    /// A throwaway 2048-bit RSA key, used only to sign tokens in these tests.
+    const TEST_KEY: &str = "-----BEGIN RSA PRIVATE KEY-----\nMIIEogIBAAKCAQEAla/+X4mCzU3PfhnyoTdBKcUPlWy5RRBuFEr/envAmKWPefVI\nLGae/JXhhc1IdE3UAeVDGLCBk8FBJr+6qp4Xw/bEqUfiusWyLWsGiigZh0uLgQTA\nASEOA7VnoD0rQwYJCi2UxFtKfLbkNFJ+Lbjb5hyDUS22PN6SoiLQQBiWuJlvKmel\nqRQBWZDxnBCKHzAggAkZc7+pFqC9crEokhU6peq64UldyDX/zRoggpb+wEVpmUcI\nYCYT0KI+GWQ8vDp0bwdh7pKrYD6kSQ2O99lETLcaTcd9F0F/5+9pL0Ff+M4Ijo6Y\na3vwV7MYhwX5OtYRY+XF2t3zl6ZKNCicm8R/gwIDAQABAoIBACQ4lpqiqUqpufxf\nJgWZ28RSQY+cZAaQz7pMXZ7TZErrwRi3YFQSLwWa9RwODSrLjHI6+m32hBxvZqcM\nPQy9Pa33QCZgVT5xyUhRPh9fTbId9y9sqVN8nqoKEv3E33uT8csLNZUALDmafgUl\nMxA4S8nWe3ZA0/jNuPjP6MmhyZL4ex62F+oY1uSOEPMYkvY2rGhDrM58292JGuja\ntuNfJRE7hdUAlhB9mHx7gBHYilu7kVCbzh9sVRKu3kRXieYRAC6Hw+uq8NY9XztL\nOvD9ngfrmvpz0mEtDQJC0gPj968pj+8KcgjeYVthBVpzwqkCf0A0q8zbVt0fheWQ\nHwgQQXUCgYEAxUzghcs/5c1BeWfxRIQkvY9SNuSobAMKdZTGtdnvC+riGXwqUlbZ\n+Gy1WMoz2AhhPxfnjK5dCn62SBQDRG1v0qvg9xvSm0AKcQTcORl3vATJXUfRH9cO\nQZSyo4/PHZJQJ7p+SzqCtoDV2Bm1KNxIcHz7MRwBwTbr5KoZ+TKsZ90CgYEAwji/\nRFiZJXYhhOOiSy+3lmNmOf5cM+zefPop5LGkoTmhwnibXfrBiv7LdJJFwIGKL32a\nCY2qpdDWSkhoG/cncuIay5eUyL9mhIjQ84X9hw/ECxKW15jI4kYqHVK0M4wC9zd7\nF77gu9UyCavTohFKm440fZabHRovohTR8KSAvt8CgYBMDsa+zQtk2ytSUe+AKjC/\nonBfGOaUPNfbW+7+S3ULcxCWInduJm0Ah2ehQtGZhiF24RAx+0WCtjYuswhPaKCi\n5f9jQyZ9EsLzrpv2pwqxQGcfvn+vdofYYCo9Q0Lkc3LS3eGxvmyFTkUheUeM6N5D\n/uoWlGVYxoNJMwmwNwifQQKBgDD4+Bl2sZ8Fi2wjrc+Bh6wvAh7LaVpadrtSpO+a\nb2WLz6LmoF5xFQ5EMu8A1v+0ajCRXh7cjtPitbXjTgUHK/ZG1vTREt4PjP0MNovB\nFG1S517XYBua1cRgZswgB3ob6r+FSM9y/N2/4y8XGXT7ITHaCJhGOnR7HtmioFEq\nWaBHAoGAdgrSUlpcvvTz03W1WgDbR4z1CLelVQLOLS/kpnx9NkIRk8FyUC0OZ3EZ\nbytzfMhOziOYr4SpoyFqInE5ACud7jE/MmFMoOqbltuQtuJTCngGkRE6X7bh69Ig\nc/dWyD0Ve1OINvfuyJzmgfKQmO6Idc0akQRmf2cFCDNy2GE2hZ4=\n-----END RSA PRIVATE KEY-----";
+    const TEST_N: &str = "la_-X4mCzU3PfhnyoTdBKcUPlWy5RRBuFEr_envAmKWPefVILGae_JXhhc1IdE3UAeVDGLCBk8FBJr-6qp4Xw_bEqUfiusWyLWsGiigZh0uLgQTAASEOA7VnoD0rQwYJCi2UxFtKfLbkNFJ-Lbjb5hyDUS22PN6SoiLQQBiWuJlvKmelqRQBWZDxnBCKHzAggAkZc7-pFqC9crEokhU6peq64UldyDX_zRoggpb-wEVpmUcIYCYT0KI-GWQ8vDp0bwdh7pKrYD6kSQ2O99lETLcaTcd9F0F_5-9pL0Ff-M4Ijo6Ya3vwV7MYhwX5OtYRY-XF2t3zl6ZKNCicm8R_gw";
+
+    fn signed_token(claims: Value) -> String {
+        let mut header = jsonwebtoken::Header::new(Algorithm::RS256);
+        header.kid = Some("test-key".into());
+        let key = jsonwebtoken::EncodingKey::from_rsa_pem(TEST_KEY.as_bytes()).unwrap();
+        jsonwebtoken::encode(&header, &claims, &key).unwrap()
+    }
+
+    fn test_keys() -> JwkSet {
+        serde_json::from_value(json!({ "keys": [{ "kty": "RSA", "kid": "test-key", "alg": "RS256", "use": "sig", "n": TEST_N, "e": "AQAB" }] })).unwrap()
+    }
+
+    fn claims(aud: &str, nonce: &str) -> Value {
+        json!({ "iss": ISSUER, "aud": aud, "sub": "user-1", "email": "a@example.com", "nonce": nonce, "exp": now_secs() + 600 })
+    }
+
+    #[test]
+    fn accepts_a_valid_id_token() {
+        let token = signed_token(claims("client-1", "n-1"));
+        let got = check_id_token(&token, &test_keys(), "client-1", "n-1").unwrap();
+        assert_eq!(got["email"], "a@example.com");
+    }
+
+    #[test]
+    fn rejects_wrong_audience_nonce_or_signature() {
+        let keys = test_keys();
+        assert!(check_id_token(&signed_token(claims("someone-else", "n-1")), &keys, "client-1", "n-1").is_err());
+        assert!(check_id_token(&signed_token(claims("client-1", "other")), &keys, "client-1", "n-1").is_err());
+        // Tamper with the payload: the signature no longer matches.
+        let token = signed_token(claims("client-1", "n-1"));
+        let mut parts: Vec<&str> = token.split('.').collect();
+        let forged = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims("client-1", "n-1").to_string().replace("user-1", "user-2"));
+        parts[1] = &forged;
+        assert!(check_id_token(&parts.join("."), &keys, "client-1", "n-1").is_err());
     }
 
     #[test]
