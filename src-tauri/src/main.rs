@@ -80,6 +80,11 @@ fn main() {
                 .get_webview_window(notch::LABEL)
                 .ok_or("pill window missing from tauri.conf.json")?;
             notch::place_top_center(&pill)?;
+            // Apply the saved all-desktops choice at startup; `settings::apply` only runs it when
+            // the setting changes. On Linux this is a no-op until the GTK window is realized, so
+            // the hit-test loop re-applies it (see `STICKY_STATE` in notch.rs).
+            let all_workspaces = app.state::<SettingsStore>().get().display.all_workspaces;
+            notch::set_all_workspaces(&pill, all_workspaces);
             // Show first: on Linux the GTK window has no gdk surface until it's realized, and
             // set_ignore_cursor_events would panic on the missing surface. Windows is fine either
             // way.

@@ -146,6 +146,9 @@ export type Settings = {
   };
 };
 
+/** Mirrors the platform-aware default in src-tauri/src/settings.rs (`Display::default`). */
+const IS_LINUX = typeof navigator !== "undefined" && navigator.userAgent.includes("Linux");
+
 export const DEFAULT_SETTINGS: Settings = {
   display: {
     monitor: null,
@@ -155,7 +158,7 @@ export const DEFAULT_SETTINGS: Settings = {
     compactIdle: true,
     hideInFullscreen: true,
     reserveSpace: false,
-    allWorkspaces: true,
+    allWorkspaces: IS_LINUX,
   },
   notifications: { enabled: true, durationSecs: 4.5, blockedApps: [] },
   media: { enabled: true, ignoredPlayers: [] },

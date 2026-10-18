@@ -38,6 +38,8 @@ pub struct Display {
     /// below the notch. Windows only.
     pub reserve_space: bool,
     /// Show the pill on every virtual desktop / workspace, not just the one it was opened on.
+    /// On by default on Linux, where a sticky window is well supported; off on Windows, where
+    /// this goes through an undocumented shell interface (`winvd`) that isn't proven yet.
     pub all_workspaces: bool,
 }
 
@@ -93,7 +95,7 @@ impl Default for Display {
             compact_idle: true,
             hide_in_fullscreen: true,
             reserve_space: false,
-            all_workspaces: true,
+            all_workspaces: cfg!(target_os = "linux"),
         }
     }
 }
@@ -345,7 +347,7 @@ mod tests {
         assert_eq!(s.display.top_offset, 0.0);
         assert!(!s.display.open_on_hover && s.display.compact_idle && s.display.hide_in_fullscreen);
         assert!(!s.display.reserve_space);
-        assert!(s.display.all_workspaces);
+        assert_eq!(s.display.all_workspaces, cfg!(target_os = "linux"));
         assert!(s.notifications.enabled);
     }
 
