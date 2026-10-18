@@ -9,11 +9,17 @@ Built with Tauri 2 (Rust), React, and Motion. See [docs/ARCHITECTURE.md](docs/AR
 
 ## Install
 
+Download the latest installer from [GitHub Releases](https://github.com/PreetinderSinghBadesha/HoverPill/releases/latest) and run it. Each release lists what's new, and earlier versions are on the [releases page](https://github.com/PreetinderSinghBadesha/HoverPill/releases).
+
+The installer isn't code-signed yet, so Windows SmartScreen may stop it: choose **More info**, then **Run anyway**.
+
+### Build the installer yourself
+
 ```bash
 npm run tauri build
 ```
 
-This produces `src-tauri/target/release/bundle/nsis/HoverPill_<version>_x64-setup.exe`, a 2 MB per-user installer. It needs no admin rights, adds HoverPill to the Start menu, and puts an uninstaller under Windows Settings › Apps. The release build uses about 40 MB of memory.
+This produces `src-tauri/target/release/bundle/nsis/HoverPill_<version>_x64-setup.exe`, a 3 MB per-user installer. It needs no admin rights, adds HoverPill to the Start menu, and puts an uninstaller under Windows Settings › Apps. The release build uses about 40 MB of memory.
 
 While the installed HoverPill is running, `npm run tauri dev` can't start a second copy. Only one HoverPill runs at a time, so the dev build just opens the installed copy's Settings and exits. Quit the installed one from its tray icon first.
 
