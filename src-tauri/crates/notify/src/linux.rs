@@ -1,7 +1,8 @@
 //! Watches `org.freedesktop.Notifications.Notify` calls on the session bus with a D-Bus
 //! *monitor* connection (`BecomeMonitor`). The desktop's own notification daemon keeps working;
 //! to keep its banners off screen, turn on its Do Not Disturb mode. Apps still call `Notify`
-//! while DND is on, so HoverPill still sees them.
+//! while DND is on, so HoverPill still sees them. Only calls addressed to the well-known daemon
+//! name count, so a daemon that forwards them on doesn't produce duplicates.
 
 use std::collections::HashMap;
 
@@ -45,6 +46,9 @@ pub fn run(on_event: &dyn Fn(Event)) -> Result<(), String> {
         if header.message_type() != MessageType::MethodCall || header.member().map(|m| m.as_str()) != Some("Notify") {
             continue;
         }
+        if !is_daemon_call(&header) {
+            continue;
+        }
         let Ok((app_name, _replaces, app_icon, summary, body, _actions, hints, _timeout)) =
             msg.body().deserialize::<NotifyArgs>()
         else {
@@ -57,6 +61,14 @@ pub fn run(on_event: &dyn Fn(Event)) -> Result<(), String> {
         on_event(Event::Notification(Notification { app, title, body: plain_text(&body), icon }));
     }
     Err("D-Bus monitor connection closed".into())
+}
+
+/// Whether a monitored `Notify` call is the one an app makes to the desktop's notification
+/// daemon, rather than a daemon forwarding it on. A monitor sees every hop of a call; Ubuntu's
+/// `org.gnome.Shell.Notifications` helper re-sends each one to gnome-shell's unique connection
+/// name, which would otherwise show up as a second notification.
+fn is_daemon_call(header: &zbus::message::Header) -> bool {
+    header.destination().map(|d| d.as_str()) == Some("org.freedesktop.Notifications")
 }
 
 fn hint_str(hints: &Hints, key: &str) -> Option<String> {
@@ -142,5 +154,23 @@ mod tests {
     fn rejects_inconsistent_image_data() {
         assert!(encode_png((2, 2, 8, true, 8, 3, vec![0; 16])).is_none()); // alpha but 3 channels
         assert!(encode_png((2, 2, 8, false, 8, 3, vec![0; 4])).is_none()); // too short
+    }
+
+    /// Ubuntu's split shell forwards every `Notify` to gnome-shell's unique name; only the call
+    /// addressed to the well-known daemon name counts.
+    #[test]
+    fn only_daemon_addressed_calls_count() {
+        let call = |destination: &str| {
+            zbus::Message::method_call("/org/freedesktop/Notifications", "Notify")
+                .unwrap()
+                .destination(destination)
+                .unwrap()
+                .interface("org.freedesktop.Notifications")
+                .unwrap()
+                .build(&())
+                .unwrap()
+        };
+        assert!(is_daemon_call(&call("org.freedesktop.Notifications").header()));
+        assert!(!is_daemon_call(&call(":1.25").header()));
     }
 }
