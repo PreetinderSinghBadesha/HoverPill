@@ -22,7 +22,7 @@ windows = { version = "0.62", features = [
   "Win32_UI_Shell_Common",
   "Win32_UI_Shell_PropertiesSystem",
 ] }
-windows-future = "0.3"
+windows-future = "0.100"
 winreg = "0.56"
 
 [target.'cfg(target_os = "linux")'.dependencies]
