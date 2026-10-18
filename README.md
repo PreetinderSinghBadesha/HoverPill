@@ -5,6 +5,8 @@
 
 HoverPill is a smart notch for Windows and Linux, styled after the iPhone's Dynamic Island. A black pill floats at the top-center of your primary monitor. It springs open when you hover over it, when Claude Code needs permission, when a notification arrives, or when media is playing. Everywhere else, clicks pass straight through to the windows underneath.
 
+[![CI](https://github.com/PreetinderSinghBadesha/HoverPill/actions/workflows/ci.yml/badge.svg)](https://github.com/PreetinderSinghBadesha/HoverPill/actions/workflows/ci.yml)
+
 Built with Tauri 2 (Rust), React, and Motion. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and the roadmap.
 
 ## Install
@@ -102,6 +104,16 @@ cargo run --manifest-path src-tauri/Cargo.toml -p hoverpill-notify --example lis
 If HoverPill isn't running, Claude Code shows its usual terminal prompt. To undo the setup, choose **Remove Claude Code hook** from the tray menu.
 
 To work on the UI in a normal browser, run `npm run dev` and open http://localhost:1420. Hover the pill, or press `1` (permission), `2` (notification), or `3` (media).
+
+## Releasing
+
+1. Bump the version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`, and commit.
+2. Tag and push: `git tag v0.3.0 && git push origin v0.3.0`.
+3. The [Release workflow](.github/workflows/release.yml) builds the Windows installer and attaches it to a draft release for that tag. Add the notes on GitHub, then publish it.
+
+The workflow refuses a tag that doesn't match the version in `tauri.conf.json`. To build a Google sign-in client into releases, so people can connect Google Calendar without making their own, add `HOVERPILL_GOOGLE_CLIENT_ID` and `HOVERPILL_GOOGLE_CLIENT_SECRET` as repository secrets.
+
+[CI](.github/workflows/ci.yml) type-checks and builds the interface, runs clippy with warnings as errors, and runs the tests on every push and pull request. Dependabot opens weekly pull requests for npm, Cargo and Actions updates.
 
 ## Layout
 

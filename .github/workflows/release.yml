@@ -1,0 +1,59 @@
+# Builds the Windows installer when a version tag is pushed, and attaches it to a draft release
+# for that tag. Write the notes on GitHub, then publish the draft.
+#
+#   1. Bump the version in package.json, src-tauri/Cargo.toml and src-tauri/tauri.conf.json.
+#   2. Commit, then: git tag v0.3.0 && git push origin v0.3.0
+#
+# Optional repository secrets HOVERPILL_GOOGLE_CLIENT_ID and HOVERPILL_GOOGLE_CLIENT_SECRET build
+# a Google sign-in client into the app, so people can connect Google Calendar without making
+# their own. Without them, Settings asks for one as before.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the app version
+        shell: pwsh
+        run: |
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            throw "Tag ${{ github.ref_name }} doesn't match the app version $version in tauri.conf.json."
+          }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install
+        run: npm ci
+
+      - name: Build and attach the installer
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOVERPILL_GOOGLE_CLIENT_ID: ${{ secrets.HOVERPILL_GOOGLE_CLIENT_ID }}
+          HOVERPILL_GOOGLE_CLIENT_SECRET: ${{ secrets.HOVERPILL_GOOGLE_CLIENT_SECRET }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: HoverPill __VERSION__
+          releaseBody: "Download HoverPill___VERSION___x64-setup.exe below and run it. It installs for your user account, with no admin rights needed. If Windows SmartScreen stops it, choose More info, then Run anyway."
+          releaseDraft: true
+          prerelease: false
