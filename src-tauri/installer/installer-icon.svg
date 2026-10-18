@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>HoverPill setup</title>
+  <svg x="64" y="64" width="896" height="896" viewBox="64 64 896 896">
+  
+  <defs>
+    <!-- The "wallpaper": leaf greens, matching the website. -->
+    <linearGradient id="app-wallpaper" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#B9D99A"/>
+      <stop offset="0.5" stop-color="#4E9A5E"/>
+      <stop offset="1" stop-color="#1F5A35"/>
+    </linearGradient>
+    <!-- The cover inside the notch: a pale version of the same colours. -->
+    <linearGradient id="app-cover" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F1F9E6"/>
+      <stop offset="1" stop-color="#BFE0A8"/>
+    </linearGradient>
+    <filter id="app-shadow" x="-50%" y="-100%" width="200%" height="300%">
+      <feGaussianBlur stdDeviation="30"/>
+    </filter>
+    <clipPath id="app-tile">
+      <rect x="64" y="64" width="896" height="896" rx="140"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#app-tile)">
+    <rect x="64" y="64" width="896" height="896" fill="url(#app-wallpaper)"/>
+
+    <!-- It hovers: a soft shadow under the notch. -->
+    <ellipse cx="512" cy="336" rx="250" ry="44" fill="#0E2A17" opacity="0.35" filter="url(#app-shadow)"/>
+
+    <!-- The notch: flat against the screen's top edge, concave ears where it meets the edge,
+         a fully round bottom. -->
+    <path fill="#000" d="
+      M 204 64 L 820 64
+      A 40 40 0 0 0 780 104
+      L 780 191
+      A 127 127 0 0 1 653 318
+      L 371 318
+      A 127 127 0 0 1 244 191
+      L 244 104
+      A 40 40 0 0 0 204 64 Z"/>
+
+    <!-- Inside: the cover on the left, the visualizer on the right. -->
+    <circle cx="371" cy="191" r="68" fill="url(#app-cover)"/>
+    <g fill="#FFFFFF">
+      <rect x="590" y="166" width="26" height="50" rx="13"/>
+      <rect x="633" y="130" width="26" height="122" rx="13"/>
+      <rect x="676" y="151" width="26" height="80" rx="13"/>
+    </g>
+  </g>
+</svg>
+  <circle cx="780" cy="780" r="190" fill="#F2F5EE" stroke="#16261B" stroke-width="22"/>
+  <path d="M780 672 V846 M702 778 L780 856 L858 778" fill="none" stroke="#16261B" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M698 896 H862" fill="none" stroke="#16261B" stroke-width="40" stroke-linecap="round"/>
+</svg>
