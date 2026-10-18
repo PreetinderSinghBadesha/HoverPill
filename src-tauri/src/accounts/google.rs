@@ -101,10 +101,10 @@ impl Google {
 /// The OAuth client to use: Settings first, then whatever was built in.
 fn client(app: &AppHandle) -> Option<(String, String)> {
     let cal = app.state::<SettingsStore>().get().calendar;
-    let id = Some(cal.client_id.trim().to_string()).filter(|s| !s.is_empty()).or(option_env!("HOVERPILL_GOOGLE_CLIENT_ID").map(str::to_string))?;
+    let id = Some(cal.client_id.trim().to_string()).filter(|s| !s.is_empty()).or(option_env!("HOVERPILL_GOOGLE_CLIENT_ID").filter(|s| !s.is_empty()).map(str::to_string))?;
     let secret = Some(cal.client_secret.trim().to_string())
         .filter(|s| !s.is_empty())
-        .or(option_env!("HOVERPILL_GOOGLE_CLIENT_SECRET").map(str::to_string))
+        .or(option_env!("HOVERPILL_GOOGLE_CLIENT_SECRET").filter(|s| !s.is_empty()).map(str::to_string))
         .unwrap_or_default();
     Some((id, secret))
 }
@@ -431,7 +431,7 @@ fn remind(app: &AppHandle) {
         due
     };
     for e in due {
-        let mins = (e.start_epoch.unwrap_or(now).saturating_sub(now) + 59) / 60;
+        let mins = e.start_epoch.unwrap_or(now).saturating_sub(now).div_ceil(60);
         let when = if mins <= 1 { "Starts in a minute".to_string() } else { format!("Starts in {mins} minutes") };
         let body = match &e.location {
             Some(place) => format!("{when}, {place}"),

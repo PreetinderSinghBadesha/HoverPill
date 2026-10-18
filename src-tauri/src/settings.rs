@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 /// Field names match src/lib/types.ts (`Settings`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
     pub display: Display,
@@ -110,18 +110,6 @@ impl Default for Media {
 impl Default for Calendar {
     fn default() -> Self {
         Self { enabled: true, reminder_minutes: 5.0, client_id: String::new(), client_secret: String::new() }
-    }
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            display: Display::default(),
-            notifications: Notifications::default(),
-            media: Media::default(),
-            calendar: Calendar::default(),
-            chatgpt: ChatGpt::default(),
-        }
     }
 }
 
@@ -318,7 +306,7 @@ pub fn media_players(media: State<hoverpill_media::Media>, store: State<Settings
             sources.push(hoverpill_media::Source::new(id));
         }
     }
-    sources.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+    sources.sort_by_key(|a| a.label.to_lowercase());
     sources.into_iter().map(|s| PlayerInfo { id: s.id, label: s.label }).collect()
 }
 

@@ -42,8 +42,8 @@ impl Backend {
         let _ = unsafe { RoInitialize(RO_INIT_MULTITHREADED) };
         let manager = Manager::RequestAsync().and_then(|op| op.join()).map_err(err)?;
         let (n1, n2) = (notify.clone(), notify.clone());
-        manager.SessionsChanged(&TypedEventHandler::new(move |_, _| Ok(n1()))).map_err(err)?;
-        manager.CurrentSessionChanged(&TypedEventHandler::new(move |_, _| Ok(n2()))).map_err(err)?;
+        manager.SessionsChanged(&TypedEventHandler::new(move |_, _| { n1(); Ok(()) })).map_err(err)?;
+        manager.CurrentSessionChanged(&TypedEventHandler::new(move |_, _| { n2(); Ok(()) })).map_err(err)?;
         Ok(Self { manager, notify, watched: None, art: ArtCache::default() })
     }
 
@@ -83,8 +83,8 @@ impl Backend {
         let Some(session) = session else { return };
         let (n1, n2) = (self.notify.clone(), self.notify.clone());
         let tokens = session
-            .MediaPropertiesChanged(&TypedEventHandler::new(move |_, _| Ok(n1())))
-            .and_then(|p| Ok((p, session.PlaybackInfoChanged(&TypedEventHandler::new(move |_, _| Ok(n2())))?)));
+            .MediaPropertiesChanged(&TypedEventHandler::new(move |_, _| { n1(); Ok(()) }))
+            .and_then(|p| Ok((p, session.PlaybackInfoChanged(&TypedEventHandler::new(move |_, _| { n2(); Ok(()) }))?)));
         if let Ok((props_token, playback_token)) = tokens {
             self.watched = Some(Watched { session: session.clone(), props_token, playback_token });
         }

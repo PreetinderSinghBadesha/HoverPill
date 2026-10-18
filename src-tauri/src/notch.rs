@@ -296,7 +296,7 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
             }
 
             let p = geo.as_ref().map(|g| read_pointer(&win, g)).unwrap_or_default();
-            if !(p.over && !p.interactive) {
+            if !p.over || p.interactive {
                 resting_since = None;
             } else if resting_since.is_none() {
                 resting_since = Some(Instant::now());
@@ -362,7 +362,7 @@ impl FocusGuard {
         use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
         let Ok(ours) = win.hwnd() else { return };
         let foreground = unsafe { GetForegroundWindow() };
-        if !foreground.is_null() && foreground != ours.0 as _ {
+        if !foreground.is_null() && !std::ptr::eq(foreground, ours.0) {
             self.previous = Some(foreground as isize);
         }
     }
@@ -370,7 +370,7 @@ impl FocusGuard {
     fn give_back_if_taken(&mut self, win: &WebviewWindow) {
         use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, IsWindow, SetForegroundWindow};
         let Ok(ours) = win.hwnd() else { return };
-        if unsafe { GetForegroundWindow() } != ours.0 as _ {
+        if !std::ptr::eq(unsafe { GetForegroundWindow() }, ours.0) {
             return;
         }
         if let Some(previous) = self.previous {
