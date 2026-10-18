@@ -273,10 +273,13 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
         let mut peek = false;
         let mut focus = FocusGuard::default();
         let _ = win.set_ignore_cursor_events(true);
-        for tick in 0u64.. {
+        let mut ticks: u64 = 0;
+        loop {
+            let tick = ticks;
+            ticks = ticks.wrapping_add(1);
             std::thread::sleep(POLL);
 
-            if tick % SLOW_TICK_EVERY == 0 {
+            if tick.is_multiple_of(SLOW_TICK_EVERY) {
                 if let Err(e) = place_top_center(&win) {
                     eprintln!("hoverpill: placement failed: {e}");
                 }
@@ -287,7 +290,7 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
                 }
             }
 
-            if tick % FULLSCREEN_CHECK_EVERY == 0 {
+            if tick.is_multiple_of(FULLSCREEN_CHECK_EVERY) {
                 let now = display.hide_in_fullscreen && geo.as_ref().is_some_and(|g| fullscreen_app_on(&win, g.monitor));
                 if now != fullscreen {
                     fullscreen = now;
