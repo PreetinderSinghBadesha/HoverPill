@@ -37,7 +37,44 @@ export type MediaAction = "play_pause" | "next" | "previous";
 export type View = "idle" | "media" | "timer" | "expanded" | "notification" | "permission" | "alarm";
 
 /** Tabs inside the open notch. */
-export type Tab = "home" | "media" | "timer" | "notifications" | "claude";
+export type Tab = "home" | "media" | "timer" | "notifications" | "claude" | "chatgpt";
+
+/** An upcoming Google Calendar event (src-tauri/src/accounts/google.rs). */
+export type CalendarEvent = {
+  id: string;
+  title: string;
+  /** RFC 3339 date-time, or a plain date for all-day events. */
+  start: string;
+  end: string;
+  allDay: boolean;
+  location?: string;
+  /** A video call link if there is one, else the event's page in Google Calendar. */
+  link?: string;
+  calendar: string;
+  color?: string;
+};
+
+export type AccountStatus = {
+  connected: boolean;
+  email?: string;
+  /** Waiting for the user in the browser. */
+  busy: boolean;
+  error?: string;
+  /** ChatGPT only: requests can use the user's ChatGPT plan. */
+  planUsage: boolean;
+};
+
+export type AccountsStatus = { google: AccountStatus; chatgpt: AccountStatus };
+
+/** A streamed answer from ChatGPT, matched to its question by `id`. */
+export type ChatChunk =
+  | { kind: "delta"; id: string; text: string }
+  | { kind: "done"; id: string }
+  | { kind: "error"; id: string; message: string; usage: boolean };
+
+export type ChatTurn = { role: "user" | "assistant"; text: string };
+
+export type ModelInfo = { id: string; label: string };
 
 export type ReceivedNotification = NotificationItem & { receivedAt: number };
 
@@ -68,18 +105,34 @@ export type Settings = {
     enabled: boolean;
     ignoredPlayers: string[];
   };
+  calendar: {
+    /** Show events on Home and drop reminders while Google Calendar is connected. */
+    enabled: boolean;
+    /** Minutes before an event to drop a reminder; 0 turns reminders off. */
+    reminderMinutes: number;
+    /** The user's own Google OAuth client ("Desktop app"). */
+    clientId: string;
+    clientSecret: string;
+  };
+  chatgpt: {
+    /** Model slug; null uses the first one the account offers. */
+    model: string | null;
+  };
 };
 
 export const DEFAULT_SETTINGS: Settings = {
   display: { monitor: null, topOffset: 0, scale: 1, openOnHover: false, compactIdle: true, hideInFullscreen: true, reserveSpace: false },
   notifications: { enabled: true, durationSecs: 4.5, blockedApps: [] },
   media: { enabled: true, ignoredPlayers: [] },
+  calendar: { enabled: true, reminderMinutes: 5, clientId: "", clientSecret: "" },
+  chatgpt: { model: null },
 };
 
 export const RANGES = {
   topOffset: { min: 0, max: 48, step: 1 },
   scale: { min: 0.8, max: 1.4, step: 0.05 },
   durationSecs: { min: 2, max: 15, step: 0.5 },
+  reminderMinutes: { min: 0, max: 60, step: 1 },
 } as const;
 
 export type MonitorInfo = { name: string; label: string; primary: boolean };

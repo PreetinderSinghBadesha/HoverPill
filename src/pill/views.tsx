@@ -1,6 +1,10 @@
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { connectChatGpt, notchTyping, openChatGptUsage, openLink } from "../lib/bridge";
+import type { Chat } from "../lib/useAccounts";
 import type {
+  AccountStatus,
+  CalendarEvent,
   Decision,
   MediaAction,
   MediaState,
@@ -121,6 +125,7 @@ const TABS: { id: Tab; label: string; icon: IconName }[] = [
   { id: "timer", label: "Timer", icon: "timer" },
   { id: "notifications", label: "Notifications", icon: "bell" },
   { id: "claude", label: "Claude", icon: "spark" },
+  { id: "chatgpt", label: "ChatGPT", icon: "chat" },
 ];
 
 export type ExpandedProps = {
@@ -134,6 +139,9 @@ export type ExpandedProps = {
   decisions: PastDecision[];
   timers: Timers;
   onSettings: () => void;
+  calendar: CalendarEvent[];
+  chat: Chat;
+  chatgpt: AccountStatus;
 };
 
 export function ExpandedView(props: ExpandedProps) {
@@ -186,14 +194,16 @@ export function ExpandedView(props: ExpandedProps) {
           {props.tab === "timer" && <TimerTab timers={props.timers} />}
           {props.tab === "notifications" && <NotificationsTab history={props.history} onClear={props.onClearHistory} now={now} />}
           {props.tab === "claude" && <ClaudeTab decisions={props.decisions} now={now} />}
+          {props.tab === "chatgpt" && <ChatGptTab chat={props.chat} account={props.chatgpt} onSettings={props.onSettings} />}
         </motion.div>
       </AnimatePresence>
     </div>
   );
 }
 
-function HomeTab({ media, onMedia, history, now, onTab }: ExpandedProps & { now: Date }) {
+function HomeTab({ media, onMedia, history, now, onTab, calendar }: ExpandedProps & { now: Date }) {
   const latest = history[0];
+  const next = nextEvent(calendar, now);
   return (
     <div className="home">
       <div className="home-main">
@@ -211,7 +221,9 @@ function HomeTab({ media, onMedia, history, now, onTab }: ExpandedProps & { now:
             Play something in Spotify, a browser or any media app.
           </EmptyState>
         )}
-        {latest && (
+        {next ? (
+          <UpNext event={next} now={now} />
+        ) : latest && (
           <button type="button" className="home-latest" onClick={() => onTab("notifications")}>
             <AppIcon app={latest.app} icon={latest.icon} className="latest-icon" />
             <span className="latest-text">
@@ -222,7 +234,73 @@ function HomeTab({ media, onMedia, history, now, onTab }: ExpandedProps & { now:
           </button>
         )}
       </div>
-      <Calendar today={now} />
+      <Calendar today={now} events={calendar} />
+    </div>
+  );
+}
+
+// ---------- Google Calendar on Home ----------
+
+/** All-day events come as a plain date; read it as a local date, not UTC midnight. */
+function eventDate(value: string, allDay: boolean) {
+  if (allDay) {
+    const [y, m, d] = value.split("-").map(Number);
+    return new Date(y, m - 1, d);
+  }
+  return new Date(value);
+}
+
+/** The first event that hasn't finished yet. */
+function nextEvent(events: CalendarEvent[], now: Date) {
+  return events.find((e) => eventDate(e.end, e.allDay) > now);
+}
+
+function dayLabel(d: Date, now: Date) {
+  const days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) / 86_400_000);
+  if (days === 0) return "Today";
+  if (days === 1) return "Tomorrow";
+  return d.toLocaleDateString([], { weekday: "long" });
+}
+
+function whenText(e: CalendarEvent, now: Date) {
+  const start = eventDate(e.start, e.allDay);
+  if (e.allDay) return `${dayLabel(start, now)}, all day`;
+  const end = eventDate(e.end, false);
+  const time = (d: Date) => d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (start <= now) return `Now, until ${time(end)}`;
+  const mins = Math.round((start.getTime() - now.getTime()) / 60_000);
+  if (mins < 60) return `In ${mins} min, at ${time(start)}`;
+  return `${dayLabel(start, now)}, ${time(start)}`;
+}
+
+const CALL_HOSTS = /(^|\.)(meet\.google\.com|zoom\.us|teams\.microsoft\.com|teams\.live\.com|webex\.com)$/;
+
+function isCall(link: string) {
+  try {
+    return CALL_HOSTS.test(new URL(link).hostname);
+  } catch {
+    return false;
+  }
+}
+
+function UpNext({ event, now }: { event: CalendarEvent; now: Date }) {
+  const call = event.link && isCall(event.link);
+  return (
+    <div className="up-next">
+      <span className="up-next-mark" style={event.color ? { background: event.color } : undefined} aria-hidden />
+      <span className="up-next-text">
+        <span className="up-next-title">{event.title}</span>
+        <span className="up-next-when">
+          {whenText(event, now)}
+          {event.location ? `, ${event.location}` : ""}
+        </span>
+      </span>
+      {event.link && (
+        <button type="button" className={`btn ${call ? "btn-solid" : "btn-quiet"} up-next-button`} onClick={() => openLink(event.link!)}>
+          {call && <Icon name="video" />}
+          {call ? "Join" : "Open"}
+        </button>
+      )}
     </div>
   );
 }
@@ -318,6 +396,116 @@ function ClaudeTab({ decisions, now }: { decisions: PastDecision[]; now: Date })
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+// ---------- ChatGPT tab ----------
+
+function ChatGptTab({ chat, account, onSettings }: { chat: Chat; account: AccountStatus; onSettings: () => void }) {
+  if (!account.connected)
+    return (
+      <EmptyState icon="chat" title="Ask ChatGPT from the notch">
+        Sign in with your ChatGPT account and questions use your Plus or Pro plan, no API key needed.{" "}
+        <button type="button" className="text-button inline" disabled={account.busy} onClick={() => connectChatGpt().catch(console.error)}>
+          {account.busy ? "Waiting for the browser…" : "Sign in with ChatGPT"}
+        </button>
+      </EmptyState>
+    );
+  if (!account.planUsage)
+    return (
+      <EmptyState icon="chat" title="Plan usage is off">
+        HoverPill can only answer when it may use your ChatGPT plan.{" "}
+        <button type="button" className="text-button inline" disabled={account.busy} onClick={() => connectChatGpt(true).catch(console.error)}>
+          Turn it on
+        </button>
+      </EmptyState>
+    );
+  return <ChatPanel chat={chat} onSettings={onSettings} />;
+}
+
+function ChatPanel({ chat, onSettings }: { chat: Chat; onSettings: () => void }) {
+  const [draft, setDraft] = useState("");
+  const input = useRef<HTMLTextAreaElement>(null);
+  const log = useRef<HTMLDivElement>(null);
+  const { turns, pending, busy } = chat;
+
+  // Keep the newest words in view as the answer streams in.
+  useLayoutEffect(() => {
+    log.current?.scrollTo({ top: log.current.scrollHeight });
+  }, [turns.length, pending?.text, pending?.error]);
+
+  // Leaving the tab (or the notch folding up) gives the keyboard back.
+  useEffect(() => () => notchTyping(false), []);
+
+  const send = () => {
+    if (!draft.trim() || busy) return;
+    chat.ask(draft);
+    setDraft("");
+  };
+  const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+    if (e.key === "Escape") input.current?.blur();
+  };
+
+  return (
+    <div className="chat">
+      <div className="chat-log" ref={log}>
+        {turns.length === 0 && !pending && <p className="chat-hint">Ask anything. Answers use your ChatGPT plan and aren't saved.</p>}
+        {turns.map((t, i) => (
+          <p key={i} className={`chat-turn is-${t.role}`}>
+            {t.text}
+          </p>
+        ))}
+        {pending && (
+          <p className="chat-turn is-assistant">
+            {pending.text}
+            {!pending.error && <span className="chat-caret" aria-hidden />}
+          </p>
+        )}
+        {pending?.error && (
+          <p className="chat-error" role="alert">
+            {pending.error}{" "}
+            {pending.usage ? (
+              <button type="button" className="text-button inline" onClick={openChatGptUsage}>
+                See usage
+              </button>
+            ) : (
+              <button type="button" className="text-button inline" onClick={onSettings}>
+                Settings
+              </button>
+            )}
+          </p>
+        )}
+      </div>
+      <div className="chat-input">
+        <textarea
+          ref={input}
+          rows={1}
+          value={draft}
+          placeholder="Ask ChatGPT"
+          aria-label="Ask ChatGPT"
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={onKey}
+          onFocus={() => notchTyping(true)}
+          onBlur={() => notchTyping(false)}
+        />
+        {busy ? (
+          <button type="button" className="round-button" aria-label="Stop the answer" title="Stop" onClick={chat.stop}>
+            <Icon name="stop" />
+          </button>
+        ) : (
+          <button type="button" className="round-button is-send" aria-label="Send" title="Send" disabled={!draft.trim()} onClick={send}>
+            <Icon name="send" />
+          </button>
+        )}
+        <button type="button" className="round-button" aria-label="Clear the conversation" title="Clear" disabled={!turns.length && !pending} onClick={chat.clear}>
+          <Icon name="clear" />
+        </button>
+      </div>
     </div>
   );
 }
@@ -495,7 +683,9 @@ function Transport({ media, onMedia, size }: { media: MediaState; onMedia: (a: M
   );
 }
 
-function Calendar({ today }: { today: Date }) {
+function Calendar({ today, events }: { today: Date; events: CalendarEvent[] }) {
+  // Days with an event get a dot (multi-day all-day events mark their first day).
+  const busy = new Set(events.map((e) => eventDate(e.start, e.allDay).toDateString()));
   const [offset, setOffset] = useState(0);
   const first = new Date(today.getFullYear(), today.getMonth() + offset, 1);
   const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
@@ -534,7 +724,7 @@ function Calendar({ today }: { today: Date }) {
         {cells.slice(0, rows * 7).map((d) => (
           <span
             key={d.toISOString()}
-            className={`calendar-day${d.getMonth() !== first.getMonth() ? " is-outside" : ""}${isToday(d) ? " is-today" : ""}`}
+            className={`calendar-day${d.getMonth() !== first.getMonth() ? " is-outside" : ""}${isToday(d) ? " is-today" : ""}${busy.has(d.toDateString()) ? " has-event" : ""}`}
           >
             {d.getDate()}
           </span>

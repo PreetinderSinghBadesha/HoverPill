@@ -1,6 +1,7 @@
 // No console window in release builds on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod accounts;
 mod appbar;
 mod autostart;
 mod broker;
@@ -49,11 +50,28 @@ fn main() {
             settings::media_players,
             autostart::get_autostart,
             autostart::set_autostart,
+            notch::notch_typing,
+            accounts::accounts_status,
+            accounts::open_link,
+            accounts::google::google_connect,
+            accounts::google::google_disconnect,
+            accounts::google::calendar_events,
+            accounts::google::calendar_refresh,
+            accounts::chatgpt::chatgpt_connect,
+            accounts::chatgpt::chatgpt_disconnect,
+            accounts::chatgpt::chatgpt_models,
+            accounts::chatgpt::chatgpt_ask,
+            accounts::chatgpt::chatgpt_stop,
+            accounts::chatgpt::chatgpt_open_usage,
         ])
         .setup(|app| {
             // Placement, media and notifications all read settings, so load them first.
             app.manage(SettingsStore::load(app.handle())?);
             app.manage(RecentApps::load(app.handle())?);
+            let vault = accounts::Vault::load(app.handle())?;
+            app.manage(accounts::google::Google::load(&vault));
+            app.manage(accounts::chatgpt::ChatGpt::load(&vault));
+            app.manage(vault);
 
             let pill = app
                 .get_webview_window(notch::LABEL)
@@ -88,6 +106,7 @@ fn main() {
                 hoverpill_notify::Event::Unavailable(reason) => events::notify(&handle, "Notifications unavailable", &reason),
             });
 
+            accounts::google::spawn(app.handle().clone());
             autostart::refresh(app.handle());
             tray::init(app)?;
             Ok(())

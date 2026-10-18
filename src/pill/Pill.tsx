@@ -5,6 +5,7 @@ import { pickView, usePillState } from "../lib/usePillState";
 import { formatCountdown, formatElapsed, stopwatchElapsed, timerLeft, useTimers } from "../lib/useTimers";
 import { useLiveSettings } from "../lib/useSettings";
 import { useArtworkColor } from "../lib/useArtworkColor";
+import { useAccounts, useChat } from "../lib/useAccounts";
 import type { View } from "../lib/types";
 import { AlarmView, ExpandedView, IdleView, MediaCompactView, NotificationView, PermissionView, TimerCompactView } from "./views";
 
@@ -40,6 +41,8 @@ export function Pill() {
   const durationMs = settings.notifications.durationSecs * 1000;
   const { state, dispatch, setOpen } = usePillState(durationMs);
   const timers = useTimers();
+  const accounts = useAccounts();
+  const chat = useChat();
   const { timer, stopwatch, now } = timers;
   const ringing = timer.status === "done";
   // What the closed notch shows ticking: the countdown wins over the stopwatch.
@@ -156,6 +159,9 @@ export function Pill() {
                     decisions={state.decisions}
                     timers={timers}
                     onSettings={openSettings}
+                    calendar={state.calendar}
+                    chat={chat}
+                    chatgpt={accounts.chatgpt}
                   />
                 )}
               </motion.div>

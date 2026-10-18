@@ -12,6 +12,7 @@
 //! `set_hit_rect`, and is told to open or close via `pill:hover`.
 
 use std::error::Error;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -61,6 +62,21 @@ pub struct Rect {
 #[derive(Default)]
 pub struct HitState {
     shape: Mutex<Option<(Rect, bool)>>,
+    /// Someone is typing in the notch (asking ChatGPT): it keeps the keyboard and stays open.
+    typing: AtomicBool,
+}
+
+/// The notch normally never takes keyboard focus. While the user types a question it has to,
+/// so this lifts that for as long as the text box is focused, and puts it back afterwards.
+#[tauri::command]
+pub fn notch_typing(active: bool, app: AppHandle, state: State<HitState>) {
+    state.typing.store(active, Ordering::Relaxed);
+    if let Some(win) = app.get_webview_window(LABEL) {
+        let _ = win.set_focusable(active);
+        if active {
+            let _ = win.set_focus();
+        }
+    }
 }
 
 /// `interactive`: the notch is open, or shows something that must be clickable. Otherwise it
@@ -291,7 +307,10 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
             // Closed: only the top-edge push or a long rest opens it; it never takes clicks.
             // Behind a fullscreen app, nothing opens it (video players put their controls at the
             // top edge too).
-            let want_open = if p.interactive {
+            let typing = win.state::<HitState>().typing.load(Ordering::Relaxed);
+            let want_open = if typing {
+                true
+            } else if p.interactive {
                 p.over || p.at_edge
             } else if fullscreen {
                 false
@@ -318,7 +337,9 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
                 accepting_input = want_input;
                 let _ = win.set_ignore_cursor_events(!want_input);
             }
-            focus.give_back_if_taken(&win);
+            if !typing {
+                focus.give_back_if_taken(&win);
+            }
         }
     });
 }

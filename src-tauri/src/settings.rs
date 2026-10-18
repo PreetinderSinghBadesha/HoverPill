@@ -14,6 +14,8 @@ pub struct Settings {
     pub display: Display,
     pub notifications: Notifications,
     pub media: Media,
+    pub calendar: Calendar,
+    pub chatgpt: ChatGpt,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -55,9 +57,29 @@ pub struct Media {
     pub ignored_players: Vec<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Calendar {
+    /// Show events on Home and drop reminders (while Google Calendar is connected).
+    pub enabled: bool,
+    /// Minutes before an event starts to drop a reminder; 0 turns reminders off.
+    pub reminder_minutes: f64,
+    /// The user's own Google OAuth client ("Desktop app"). Empty uses one built in, if any.
+    pub client_id: String,
+    pub client_secret: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ChatGpt {
+    /// Model slug; `None` uses the first one the account offers.
+    pub model: Option<String>,
+}
+
 pub const TOP_OFFSET_RANGE: (f64, f64) = (0.0, 48.0);
 pub const SCALE_RANGE: (f64, f64) = (0.8, 1.4);
 pub const DURATION_RANGE: (f64, f64) = (2.0, 15.0);
+pub const REMINDER_RANGE: (f64, f64) = (0.0, 60.0);
 
 impl Default for Display {
     fn default() -> Self {
@@ -85,9 +107,21 @@ impl Default for Media {
     }
 }
 
+impl Default for Calendar {
+    fn default() -> Self {
+        Self { enabled: true, reminder_minutes: 5.0, client_id: String::new(), client_secret: String::new() }
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
-        Self { display: Display::default(), notifications: Notifications::default(), media: Media::default() }
+        Self {
+            display: Display::default(),
+            notifications: Notifications::default(),
+            media: Media::default(),
+            calendar: Calendar::default(),
+            chatgpt: ChatGpt::default(),
+        }
     }
 }
 
@@ -120,6 +154,10 @@ impl Settings {
         self.notifications.duration_secs = clamp(DURATION_RANGE, self.notifications.duration_secs, n.duration_secs);
         self.notifications.blocked_apps = tidy(self.notifications.blocked_apps);
         self.media.ignored_players = tidy(self.media.ignored_players);
+        self.calendar.reminder_minutes = clamp(REMINDER_RANGE, self.calendar.reminder_minutes, Calendar::default().reminder_minutes).round();
+        self.calendar.client_id = self.calendar.client_id.trim().to_string();
+        self.calendar.client_secret = self.calendar.client_secret.trim().to_string();
+        self.chatgpt.model = self.chatgpt.model.filter(|m| !m.trim().is_empty());
         self
     }
 
@@ -168,6 +206,9 @@ impl SettingsStore {
 
 /// Pushes settings into the parts of the app that hold their own copy.
 pub fn apply(app: &AppHandle, settings: &Settings) {
+    // Turning calendar events off clears them from the notch; turning them back on restores them.
+    let calendar = if settings.calendar.enabled { app.state::<crate::accounts::google::Google>().events() } else { Vec::new() };
+    crate::events::send(app, "pill:calendar", calendar);
     let media = app.state::<hoverpill_media::Media>();
     media.set_ignored(settings.media.ignored_players.iter().cloned());
     crate::events::send(

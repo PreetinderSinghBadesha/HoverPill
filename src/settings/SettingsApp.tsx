@@ -4,6 +4,7 @@ import { getAutostart, inTauri, listMonitors, mediaPlayers, notifyingApps, recen
 import { useEditableSettings } from "../lib/useSettings";
 import { DEFAULT_SETTINGS, RANGES, type MonitorInfo, type PlayerInfo, type Settings } from "../lib/types";
 import { Section, SelectRow, SliderRow, SwitchRow, ToggleList } from "./controls";
+import { AccountsTab } from "./AccountsTab";
 import mark from "../../assets/brand/hoverpill-icon.svg";
 
 type Update = (change: (s: Settings) => Settings, debounceMs?: number) => void;
@@ -13,6 +14,7 @@ const TABS = [
   { id: "display", label: "Display", icon: "M3 5h18v11H3zM8 20h8M12 16v4" },
   { id: "notifications", label: "Notifications", icon: "M18 16V11a6 6 0 1 0-12 0v5l-2 2h16l-2-2ZM10 20a2 2 0 0 0 4 0" },
   { id: "media", label: "Media", icon: "M9 18V6l11-2v12M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm11-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" },
+  { id: "accounts", label: "Accounts", icon: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM4.5 20a7.5 7.5 0 0 1 15 0" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
@@ -101,6 +103,7 @@ export function SettingsApp() {
             {tab === "display" && <DisplayTab settings={settings} update={update} />}
             {tab === "notifications" && <NotificationsTab settings={settings} update={update} />}
             {tab === "media" && <MediaTab settings={settings} update={update} />}
+            {tab === "accounts" && <AccountsTab settings={settings} update={update} />}
           </>
         )}
       </main>

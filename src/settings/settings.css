@@ -415,3 +415,75 @@ body {
     transition: none;
   }
 }
+
+/* ---------- accounts ---------- */
+
+.button.is-primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 500;
+}
+
+.button.is-primary:hover {
+  filter: brightness(1.06);
+  background: var(--accent);
+}
+
+.button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.text-input {
+  width: 300px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: 13px "Cascadia Mono", Consolas, monospace;
+}
+
+.text-input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+/* A row that's only an explanation, no control. */
+.row.is-text {
+  min-height: 0;
+}
+
+.row.is-text .row-description {
+  margin: 0;
+}
+
+.row-error {
+  color: var(--danger-text);
+}
+
+/* A link-styled button inside a sentence. */
+.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.link:hover {
+  color: var(--text);
+}
+
+.steps {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
+.steps li + li {
+  margin-top: 3px;
+}

@@ -18,12 +18,19 @@ const PATHS = {
   timer: "M12 21a7.5 7.5 0 1 0 0-15 7.5 7.5 0 0 0 0 15ZM12 9.5v4l2.5 1.6M10 2.75h4M18.2 6.3l1.3-1.3",
   plus: "M12 6v12M6 12h12",
   minus: "M6 12h12",
+  // A speech bubble, for ChatGPT.
+  chat: "M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-8.5L6 19.5V16H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z",
+  send: "M5 12h13M12.5 6.5 18 12l-5.5 5.5",
+  stop: "M7.5 7.5h9v9h-9z",
+  clear: "M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12",
+  video: "M4 7.5h10.5v9H4zM14.5 10.5l5-3v9l-5-3",
+  calendar: "M5 6h14v14H5zM5 10h14M9 3.5v4M15 3.5v4",
 } as const;
 
 export type IconName = keyof typeof PATHS;
 
 /** Transport icons read better filled; everything else is a stroke. */
-const FILLED = new Set<IconName>(["prev", "next", "play", "pause"]);
+const FILLED = new Set<IconName>(["prev", "next", "play", "pause", "stop"]);
 
 export function Icon({ name, className }: { name: IconName; className?: string }) {
   const filled = FILLED.has(name);

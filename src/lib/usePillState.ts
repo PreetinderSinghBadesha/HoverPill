@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef } from "react";
-import { currentMedia, inTauri, on, pillReady } from "./bridge";
-import type { Decision, MediaState, NotificationItem, PastDecision, PermissionRequest, ReceivedNotification, Tab, View } from "./types";
+import { calendarEvents, currentMedia, inTauri, on, pillReady } from "./bridge";
+import type { CalendarEvent, Decision, MediaState, NotificationItem, PastDecision, PermissionRequest, ReceivedNotification, Tab, View } from "./types";
 
 const HOVER_LEAVE_MS = 180;
 /** A burst (a busy group chat) shouldn't take minutes to play through: keep the newest few cards. */
@@ -26,6 +26,8 @@ type State = {
   unseen: number;
   permissions: PermissionRequest[];
   decisions: PastDecision[];
+  /** Upcoming Google Calendar events, soonest first. */
+  calendar: CalendarEvent[];
 };
 
 type Action =
@@ -39,7 +41,8 @@ type Action =
   | { type: "clearHistory" }
   | { type: "permission"; value: PermissionRequest }
   | { type: "decide"; id: string; decision: Decision }
-  | { type: "cancelPermission"; id: string };
+  | { type: "cancelPermission"; id: string }
+  | { type: "calendar"; value: CalendarEvent[] };
 
 function withTab(state: State, tab: Tab): State {
   return { ...state, tab, unseen: tab === "notifications" ? 0 : state.unseen };
@@ -87,13 +90,15 @@ function reducer(state: State, action: Action): State {
     }
     case "cancelPermission":
       return { ...state, permissions: state.permissions.filter((p) => p.id !== action.id) };
+    case "calendar":
+      return { ...state, calendar: action.value };
   }
 }
 
 function savedTab(): Tab {
   try {
     const t = localStorage.getItem(TAB_KEY);
-    if (t === "home" || t === "media" || t === "timer" || t === "notifications" || t === "claude") return t;
+    if (t === "home" || t === "media" || t === "timer" || t === "notifications" || t === "claude" || t === "chatgpt") return t;
   } catch {
     // Storage can be unavailable; Home is fine.
   }
@@ -111,6 +116,7 @@ const initial = (): State => ({
   unseen: 0,
   permissions: [],
   decisions: [],
+  calendar: [],
 });
 
 /**
@@ -149,11 +155,15 @@ export function usePillState(notificationMs: number) {
       on("pill:notification", (value) => dispatch({ type: "notify", value })),
       on("pill:permission", (value) => dispatch({ type: "permission", value })),
       on("pill:permission-cancel", ({ id }) => dispatch({ type: "cancelPermission", id })),
+      on("pill:calendar", (value) => dispatch({ type: "calendar", value })),
     ];
     Promise.all(subs.map((s) => s.registered)).then(pillReady);
     // Anything that started playing before the UI loaded was emitted before we listened.
     currentMedia()
       .then((value) => value && dispatch({ type: "media", value }))
+      .catch(console.error);
+    calendarEvents()
+      .then((value) => dispatch({ type: "calendar", value }))
       .catch(console.error);
     return () => subs.forEach((s) => s.off());
   }, []);
