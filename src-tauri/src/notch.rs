@@ -340,6 +340,131 @@ pub fn set_all_workspaces(win: &WebviewWindow, all: bool) {
     }
 }
 
+/// X11 (Linux/XWayland) helpers for spotting a fullscreen app. The window manager flags it with
+/// `_NET_WM_STATE_FULLSCREEN` on the active window, so we read the root window's
+/// `_NET_ACTIVE_WINDOW` and check the window reaches the pill's monitor edges. libX11 is used
+/// directly (through `x11-dl`) because GDK only exposes properties of our own window.
+#[cfg(target_os = "linux")]
+mod x11 {
+    use std::cell::RefCell;
+    use std::ffi::CString;
+    use std::os::raw::{c_long, c_void};
+
+    use x11_dl::xlib::{Display, Window, Xlib};
+
+    /// One Xlib connection, kept for the life of the hit-test thread. Xlib connections must not be
+    /// shared between threads, and only that thread ever touches this one.
+    struct Connection {
+        xlib: Xlib,
+        display: *mut Display,
+    }
+
+    impl Connection {
+        fn open() -> Option<Self> {
+            let xlib = Xlib::open().ok()?;
+            // SAFETY: `XOpenDisplay` on a thread that keeps the connection to itself.
+            let display = unsafe { (xlib.XOpenDisplay)(std::ptr::null()) };
+            (!display.is_null()).then_some(Self { xlib, display })
+        }
+    }
+
+    impl Drop for Connection {
+        fn drop(&mut self) {
+            // SAFETY: `display` came from `XOpenDisplay` on this thread and is still open.
+            unsafe { (self.xlib.XCloseDisplay)(self.display) };
+        }
+    }
+
+    thread_local! {
+        static CONNECTION: RefCell<Option<Connection>> = const { RefCell::new(None) };
+    }
+
+    /// Reads a property as its 32-bit values: both `WINDOW` and `ATOM` properties are stored as
+    /// `long`s. Empty if the property is missing or an unexpected type.
+    fn read_property(conn: &Connection, window: Window, name: &str) -> Vec<u64> {
+        let Ok(name) = CString::new(name) else { return Vec::new() };
+        // SAFETY: pointers below are either null or owned by Xlib; the buffer is freed with XFree.
+        unsafe {
+            let atom = (conn.xlib.XInternAtom)(conn.display, name.as_ptr(), 0);
+            if atom == 0 {
+                return Vec::new();
+            }
+            let mut actual_type = 0u64;
+            let mut format = 0i32;
+            let mut count = 0u64;
+            let mut after = 0u64;
+            let mut data: *mut u8 = std::ptr::null_mut();
+            let status = (conn.xlib.XGetWindowProperty)(
+                conn.display, window, atom, 0, 1024, 0, 0,
+                &mut actual_type, &mut format, &mut count, &mut after, &mut data,
+            );
+            if status != 0 || data.is_null() {
+                return Vec::new();
+            }
+            let mut values = Vec::new();
+            if format == 32 {
+                let longs = data as *const c_long;
+                for i in 0..count as usize {
+                    values.push(*longs.add(i) as u64);
+                }
+            }
+            (conn.xlib.XFree)(data as *mut c_void);
+            values
+        }
+    }
+
+    fn intern(conn: &Connection, name: &str) -> u64 {
+        let Ok(name) = CString::new(name) else { return 0 };
+        // SAFETY: `conn.display` is our open connection.
+        unsafe { (conn.xlib.XInternAtom)(conn.display, name.as_ptr(), 0) }
+    }
+
+    /// Whether `window`'s frame reaches all four edges of `monitor` on the X root.
+    fn covers(conn: &Connection, window: Window, (mx, my, mw, mh): (i32, i32, i32, i32)) -> bool {
+        // SAFETY: all pointers are to locals or `conn.display`; Xlib only fills them in.
+        unsafe {
+            let mut root = 0u64;
+            let mut x = 0i32;
+            let mut y = 0i32;
+            let mut w = 0u32;
+            let mut h = 0u32;
+            let mut border = 0u32;
+            let mut depth = 0u32;
+            let status = (conn.xlib.XGetGeometry)(
+                conn.display, window, &mut root, &mut x, &mut y, &mut w, &mut h, &mut border, &mut depth,
+            );
+            if status == 0 {
+                return false;
+            }
+            // `x`/`y` are relative to the parent, which a reparenting WM makes a frame window.
+            let mut rx = 0i32;
+            let mut ry = 0i32;
+            let mut child = 0u64;
+            (conn.xlib.XTranslateCoordinates)(conn.display, window, root, 0, 0, &mut rx, &mut ry, &mut child);
+            let (w, h) = (w as i32, h as i32);
+            rx <= mx && ry <= my && rx + w >= mx + mw && ry + h >= my + mh
+        }
+    }
+
+    /// `true` when the active window is marked fullscreen and covers the given monitor.
+    pub fn fullscreen_app_on(monitor: (i32, i32, i32, i32)) -> bool {
+        CONNECTION.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            if slot.is_none() {
+                *slot = Connection::open();
+            }
+            let Some(conn) = slot.as_ref() else { return false };
+            let root = unsafe { (conn.xlib.XDefaultRootWindow)(conn.display) };
+            let active = read_property(conn, root, "_NET_ACTIVE_WINDOW").first().copied().unwrap_or(0) as Window;
+            if active == 0 {
+                return false;
+            }
+            let fullscreen = intern(conn, "_NET_WM_STATE_FULLSCREEN");
+            fullscreen != 0 && read_property(conn, active, "_NET_WM_STATE").contains(&fullscreen) && covers(conn, active, monitor)
+        })
+    }
+}
+
 /// Whether the foreground window covers the whole monitor, i.e. a fullscreen video, game or
 /// presentation (or a browser in F11). The desktop and the taskbar don't count, and neither
 /// does a maximised window: with an auto-hiding taskbar those cover the whole monitor too, but
@@ -363,7 +488,12 @@ fn fullscreen_app_on(win: &WebviewWindow, (mx, my, mw, mh): (i32, i32, i32, i32)
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn fullscreen_app_on(_win: &WebviewWindow, monitor: (i32, i32, i32, i32)) -> bool {
+    x11::fullscreen_app_on(monitor)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn fullscreen_app_on(_win: &WebviewWindow, _monitor: (i32, i32, i32, i32)) -> bool {
     false
 }
@@ -473,12 +603,15 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
 
             // Linux: keep the X input region on the reported notch box so a real cursor is seen
             // over the pill (and its clicks land on us) while everything else stays click-through.
+            // While a fullscreen app covers the monitor the pill is hidden and must not intercept
+            // anything, so hand the whole input region back — unless a card is up that needs clicks.
             #[cfg(target_os = "linux")]
             {
                 let rect = win.state::<HitState>().shape.lock().unwrap().map(|(r, _)| r);
-                if rect != last_region || tick % SLOW_TICK_EVERY == 0 {
-                    last_region = rect;
-                    set_input_region(&win, rect);
+                let target = if fullscreen && !p.interactive { None } else { rect };
+                if target != last_region || tick.is_multiple_of(SLOW_TICK_EVERY) {
+                    last_region = target;
+                    set_input_region(&win, target);
                 }
             }
             // Windows: the cursor is always readable, so a plain all-or-nothing toggle is fine.
