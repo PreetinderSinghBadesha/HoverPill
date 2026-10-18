@@ -89,7 +89,8 @@ export function NotificationView({ item, durationMs }: { item: NotificationItem;
 }
 
 export function PermissionView({ request, queued, onDecide }: { request: PermissionRequest; queued: number; onDecide: (d: Decision) => void }) {
-  const hasSuggestions = request.permission_suggestions && request.permission_suggestions.length > 0;
+  // "Always allow" only makes sense when Claude offered a rule to remember.
+  const canAlwaysAllow = request.permission_suggestions?.some((s) => s.behavior === "allow") ?? false;
   return (
     <div className="card-permission">
       <div className="perm-header">
@@ -107,7 +108,7 @@ export function PermissionView({ request, queued, onDecide }: { request: Permiss
         </button>
       </div>
       <div className="perm-actions">
-        {hasSuggestions && (
+        {canAlwaysAllow && (
           <button type="button" className="btn btn-quiet" onClick={() => onDecide("always_allow")}>
             Always allow
           </button>

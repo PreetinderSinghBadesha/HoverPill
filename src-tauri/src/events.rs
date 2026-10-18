@@ -45,29 +45,18 @@ pub fn pill_ready(app: AppHandle, outbox: State<Outbox>) {
     }
 }
 
+/// Claude Code sends these in camelCase (`toolName`, `ruleContent`), and expects the same names
+/// back in `updatedPermissions`; the field names stay snake_case in Rust.
 #[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PermissionRule {
     pub tool_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rule_content: Option<String>,
 }
 
-#[derive(Clone, Serialize)]
-pub struct PermissionUpdate {
-    pub r#type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rules: Option<Vec<PermissionRule>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub behavior: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub destination: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mode: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub directories: Option<Vec<String>>,
-}
-
 #[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PermissionSuggestion {
     pub r#type: Option<String>,
     #[serde(default)]
@@ -179,4 +168,18 @@ pub fn media_command(action: MediaAction, media: State<Media>) {
 #[tauri::command]
 pub fn current_media(media: State<Media>, settings: State<SettingsStore>) -> Option<MediaState> {
     media.current().filter(|_| settings.get().media.enabled).map(MediaState::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decisions_deserialize_from_the_ui() {
+        let parse = |s: &str| serde_json::from_str::<Decision>(s).unwrap();
+        assert!(matches!(parse(r#""allow""#), Decision::Allow));
+        assert!(matches!(parse(r#""deny""#), Decision::Deny));
+        assert!(matches!(parse(r#""ask""#), Decision::Ask));
+        assert!(matches!(parse(r#""always_allow""#), Decision::AlwaysAllow));
+    }
 }
