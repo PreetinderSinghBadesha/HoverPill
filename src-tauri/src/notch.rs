@@ -197,6 +197,9 @@ pub fn place_top_center(win: &WebviewWindow) -> Result<(), Box<dyn Error>> {
 /// Cached so the 60 Hz loop makes one cross-thread call (cursor) instead of several.
 struct Geometry {
     origin: PhysicalPosition<i32>,
+    /// Only Linux needs the window's own size (see `bounds`).
+    #[cfg(target_os = "linux")]
+    size: PhysicalSize<u32>,
     scale: f64,
     monitor: (i32, i32, i32, i32),
 }
@@ -205,9 +208,19 @@ impl Geometry {
     fn read(win: &WebviewWindow) -> Option<Self> {
         Some(Self {
             origin: win.inner_position().ok()?,
+            #[cfg(target_os = "linux")]
+            size: win.inner_size().ok()?,
             scale: win.scale_factor().ok()?,
             monitor: target(win).ok()?.monitor,
         })
+    }
+
+    /// The window's own box on screen: x, y, width, height, in the same pixels as `origin`.
+    /// Linux checks whether a fullscreen window reaches over this rather than over the whole
+    /// monitor, so the test stays inside X11's coordinate space (see `x11::fullscreen_app_on`).
+    #[cfg(target_os = "linux")]
+    fn bounds(&self) -> (i32, i32, i32, i32) {
+        (self.origin.x, self.origin.y, self.size.width as i32, self.size.height as i32)
     }
 }
 
@@ -340,10 +353,10 @@ pub fn set_all_workspaces(win: &WebviewWindow, all: bool) {
     }
 }
 
-/// X11 (Linux/XWayland) helpers for spotting a fullscreen app. The window manager flags it with
-/// `_NET_WM_STATE_FULLSCREEN` on the active window, so we read the root window's
-/// `_NET_ACTIVE_WINDOW` and check the window reaches the pill's monitor edges. libX11 is used
-/// directly (through `x11-dl`) because GDK only exposes properties of our own window.
+/// X11 (Linux/XWayland) helpers for spotting a fullscreen app. The window manager flags a
+/// fullscreen window with `_NET_WM_STATE_FULLSCREEN` and lists managed windows in
+/// `_NET_CLIENT_LIST`. libX11 is used directly (through `x11-dl`) because GDK only exposes
+/// properties of our own window.
 #[cfg(target_os = "linux")]
 mod x11 {
     use std::cell::RefCell;
@@ -419,8 +432,8 @@ mod x11 {
         unsafe { (conn.xlib.XInternAtom)(conn.display, name.as_ptr(), 0) }
     }
 
-    /// Whether `window`'s frame reaches all four edges of `monitor` on the X root.
-    fn covers(conn: &Connection, window: Window, (mx, my, mw, mh): (i32, i32, i32, i32)) -> bool {
+    /// Whether `window`'s frame reaches over `region` (x, y, width, height) on the X root.
+    fn covers(conn: &Connection, window: Window, (rx, ry, rw, rh): (i32, i32, i32, i32)) -> bool {
         // SAFETY: all pointers are to locals or `conn.display`; Xlib only fills them in.
         unsafe {
             let mut root = 0u64;
@@ -437,30 +450,52 @@ mod x11 {
                 return false;
             }
             // `x`/`y` are relative to the parent, which a reparenting WM makes a frame window.
-            let mut rx = 0i32;
-            let mut ry = 0i32;
+            let mut ox = 0i32;
+            let mut oy = 0i32;
             let mut child = 0u64;
-            (conn.xlib.XTranslateCoordinates)(conn.display, window, root, 0, 0, &mut rx, &mut ry, &mut child);
+            (conn.xlib.XTranslateCoordinates)(conn.display, window, root, 0, 0, &mut ox, &mut oy, &mut child);
             let (w, h) = (w as i32, h as i32);
-            rx <= mx && ry <= my && rx + w >= mx + mw && ry + h >= my + mh
+            ox <= rx && oy <= ry && ox + w >= rx + rw && oy + h >= ry + rh
         }
     }
 
-    /// `true` when the active window is marked fullscreen and covers the given monitor.
-    pub fn fullscreen_app_on(monitor: (i32, i32, i32, i32)) -> bool {
+    /// `true` when a window marked fullscreen covers `pill`, the pill window's own box on the X
+    /// root.
+    ///
+    /// Reading just `_NET_ACTIVE_WINDOW` isn't enough: some window managers (Ubuntu's split shell,
+    /// for one) leave it pointing at a dead helper window while an app is fullscreen, and the
+    /// fullscreen app need not be the focused one. So walk `_NET_CLIENT_LIST` and accept any
+    /// window that is flagged fullscreen, isn't hidden on another workspace, and reaches over the
+    /// pill. Comparing against the pill's box rather than the monitor keeps the test inside X11's
+    /// own coordinates, so DPI scaling can't make it miss.
+    pub fn fullscreen_app_on(pill: (i32, i32, i32, i32)) -> bool {
         CONNECTION.with(|slot| {
             let mut slot = slot.borrow_mut();
             if slot.is_none() {
                 *slot = Connection::open();
             }
             let Some(conn) = slot.as_ref() else { return false };
-            let root = unsafe { (conn.xlib.XDefaultRootWindow)(conn.display) };
-            let active = read_property(conn, root, "_NET_ACTIVE_WINDOW").first().copied().unwrap_or(0) as Window;
-            if active == 0 {
+            let fullscreen = intern(conn, "_NET_WM_STATE_FULLSCREEN");
+            if fullscreen == 0 {
                 return false;
             }
-            let fullscreen = intern(conn, "_NET_WM_STATE_FULLSCREEN");
-            fullscreen != 0 && read_property(conn, active, "_NET_WM_STATE").contains(&fullscreen) && covers(conn, active, monitor)
+            let hidden = intern(conn, "_NET_WM_STATE_HIDDEN");
+            let root = unsafe { (conn.xlib.XDefaultRootWindow)(conn.display) };
+            let mut windows = read_property(conn, root, "_NET_CLIENT_LIST");
+            if windows.is_empty() {
+                windows = read_property(conn, root, "_NET_CLIENT_LIST_STACKING");
+            }
+            // Fall back to the active window for managers that don't publish a client list.
+            if let Some(active) = read_property(conn, root, "_NET_ACTIVE_WINDOW").first() {
+                if !windows.contains(active) {
+                    windows.push(*active);
+                }
+            }
+            windows.into_iter().any(|window| {
+                let window = window as Window;
+                let state = read_property(conn, window, "_NET_WM_STATE");
+                state.contains(&fullscreen) && !state.contains(&hidden) && covers(conn, window, pill)
+            })
         })
     }
 }
@@ -470,9 +505,10 @@ mod x11 {
 /// does a maximised window: with an auto-hiding taskbar those cover the whole monitor too, but
 /// they're ordinary windows (IsZoomed), not fullscreen apps.
 #[cfg(windows)]
-fn fullscreen_app_on(win: &WebviewWindow, (mx, my, mw, mh): (i32, i32, i32, i32)) -> bool {
+fn fullscreen_app_on(win: &WebviewWindow, geo: &Geometry) -> bool {
     use windows_sys::Win32::Foundation::RECT;
     use windows_sys::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetForegroundWindow, GetWindowRect, IsZoomed};
+    let (mx, my, mw, mh) = geo.monitor;
     unsafe {
         let fg = GetForegroundWindow();
         if fg.is_null() || fg as isize == native_handle(win) || IsZoomed(fg) != 0 {
@@ -489,12 +525,12 @@ fn fullscreen_app_on(win: &WebviewWindow, (mx, my, mw, mh): (i32, i32, i32, i32)
 }
 
 #[cfg(target_os = "linux")]
-fn fullscreen_app_on(_win: &WebviewWindow, monitor: (i32, i32, i32, i32)) -> bool {
-    x11::fullscreen_app_on(monitor)
+fn fullscreen_app_on(_win: &WebviewWindow, geo: &Geometry) -> bool {
+    x11::fullscreen_app_on(geo.bounds())
 }
 
 #[cfg(not(any(windows, target_os = "linux")))]
-fn fullscreen_app_on(_win: &WebviewWindow, _monitor: (i32, i32, i32, i32)) -> bool {
+fn fullscreen_app_on(_win: &WebviewWindow, _geo: &Geometry) -> bool {
     false
 }
 
@@ -540,7 +576,7 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
             }
 
             if tick.is_multiple_of(FULLSCREEN_CHECK_EVERY) {
-                let now = display.hide_in_fullscreen && geo.as_ref().is_some_and(|g| fullscreen_app_on(&win, g.monitor));
+                let now = display.hide_in_fullscreen && geo.as_ref().is_some_and(|g| fullscreen_app_on(&win, g));
                 if now != fullscreen {
                     fullscreen = now;
                     let _ = win.emit("pill:fullscreen", fullscreen);
