@@ -85,8 +85,8 @@ fn note_failure(message: impl FnOnce() -> String) {
 }
 
 /// Writes the extension if it's missing or changed, makes sure GNOME will load
-/// it, and nudges the user about the one logout a fresh install needs. A no-op
-/// off GNOME. Called once at startup.
+/// it, and tells the user once about the one logout a fresh install needs. A
+/// no-op off GNOME. Called once at startup.
 pub fn install(app: &AppHandle) {
     if !gnome_session() {
         return;
@@ -94,20 +94,26 @@ pub fn install(app: &AppHandle) {
     let Some(home) = app.path().home_dir().ok() else { return };
     let dir = home.join(".local/share/gnome-shell/extensions").join(UUID);
 
-    let _ = update(&dir.join("metadata.json"), METADATA);
-    let _ = update(&dir.join("extension.js"), EXTENSION);
-    let enabled = enable_uuid(app);
-    // GNOME reads the extensions directory once, at session start, so a helper installed (or
-    // re-enabled) while the session is running answers nothing until the next login. Say so on
-    // every start until it's loaded: someone who installs HoverPill, quits it and starts it again
-    // days later would otherwise never learn why fullscreen hiding does nothing on Wayland.
-    if enabled && extension_loaded() == Some(false) {
+    // Both writes are wanted even when the first one says "already current".
+    let wrote = update(&dir.join("metadata.json"), METADATA).unwrap_or(false)
+        | update(&dir.join("extension.js"), EXTENSION).unwrap_or(false);
+    let enabled = matches!(enable_uuid(app), Enabled::Added);
+    // GNOME reads the extensions directory once, at session start, so a helper just installed (or
+    // just enabled) while the session is running answers nothing until the next login. Say so
+    // when that happens — not at every start, which would nag the user who already knows.
+    if needs_logout_notice(wrote || enabled, extension_loaded()) {
         events::notify(
             app,
             "HoverPill: one logout to finish setup",
             "Log out and back in once so the Wayland fullscreen helper can load. After that, fullscreen apps hide the notch too.",
         );
     }
+}
+
+/// Whether to mention the logout: only right after the helper was written or enabled, and only
+/// while the running session still hasn't loaded it.
+fn needs_logout_notice(changed: bool, loaded: Option<bool>) -> bool {
+    changed && loaded == Some(false)
 }
 
 /// GNOME sessions list themselves in `XDG_CURRENT_DESKTOP` ("GNOME", but also
@@ -132,43 +138,61 @@ fn update(path: &Path, contents: &str) -> std::io::Result<bool> {
 
 /// Merges `uuid` into the text of the `enabled-extensions` array as `gsettings
 /// get` prints it. `None` when the text isn't a recognizable array, in which
-/// case the user's setting is left alone.
-fn merged(list: &str, uuid: &str) -> Option<String> {
+/// case the user's setting is left alone. The flag says whether the uuid was
+/// missing, i.e. whether there is anything worth writing back.
+fn merged(list: &str, uuid: &str) -> Option<(String, bool)> {
     // GVariant prints the empty array of a non-defaulted type as `@as []`.
     let value = list.trim();
     let value = value.strip_prefix("@as").map(str::trim_start).unwrap_or(value);
     let inner = value.strip_prefix('[')?.strip_suffix(']')?;
     let items: Vec<&str> = inner.split(',').map(str::trim).filter(|item| !item.is_empty()).collect();
     if items.iter().any(|item| item.contains(uuid)) {
-        return Some(value.to_string());
+        return Some((value.to_string(), false));
     }
-    Some(if items.is_empty() {
+    let text = if items.is_empty() {
         format!("['{uuid}']")
     } else {
         format!("[{}, '{uuid}']", items.join(", "))
-    })
+    };
+    Some((text, true))
 }
 
-/// Adds our uuid to the enabled extensions; `true` once the setting is as we want it. The running
+/// What making sure our uuid is in `enabled-extensions` did.
+#[derive(Clone, Copy)]
+enum Enabled {
+    /// It was already there; nothing to write.
+    Already,
+    /// It was missing and has just been added.
+    Added,
+    /// `gsettings` isn't there, refused, or the list can't be parsed.
+    Failed,
+}
+
+/// Adds our uuid to the enabled extensions; `Added` when the setting had to change. The running
 /// shell only knows about extensions loaded at session start, but the setting persists, so the
 /// next login picks both the files and the enablement up in one go.
-fn enable_uuid(app: &AppHandle) -> bool {
+fn enable_uuid(app: &AppHandle) -> Enabled {
     let out = Command::new("gsettings").args(["get", "org.gnome.shell", "enabled-extensions"]).output();
-    let Ok(out) = out else { return false };
+    let Ok(out) = out else { return Enabled::Failed };
     if !out.status.success() {
-        return false;
+        return Enabled::Failed;
     }
-    let Some(new_list) = merged(&String::from_utf8_lossy(&out.stdout), UUID) else {
-        return false;
+    let current = String::from_utf8_lossy(&out.stdout);
+    let Some((new_list, adding)) = merged(&current, UUID) else {
+        return Enabled::Failed;
     };
+    if !adding {
+        return Enabled::Already;
+    }
     let applied = Command::new("gsettings")
         .args(["set", "org.gnome.shell", "enabled-extensions", &new_list])
         .status()
         .is_ok_and(|status| status.success());
     if !applied {
         events::notify(app, "Can't enable the Wayland fullscreen helper", "Reinstall HoverPill or enable the extension by hand (GNOME Extensions).");
+        return Enabled::Failed;
     }
-    applied
+    Enabled::Added
 }
 
 /// Whether the running session has the extension loaded (i.e. the user has logged out since it was
@@ -180,20 +204,33 @@ fn extension_loaded() -> Option<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::merged;
+    use super::{merged, needs_logout_notice};
 
     #[test]
     fn merges_into_every_shape_gsettings_prints() {
-        assert_eq!(merged("[]", "a@b"), Some("['a@b']".to_string()));
-        assert_eq!(merged("@as []", "a@b"), Some("['a@b']".to_string()));
-        assert_eq!(merged("['x@y']", "a@b"), Some("['x@y', 'a@b']".to_string()));
-        assert_eq!(merged("['x@y','z@w']", "a@b"), Some("['x@y', 'z@w', 'a@b']".to_string()));
+        assert_eq!(merged("[]", "a@b"), Some(("['a@b']".to_string(), true)));
+        assert_eq!(merged("@as []", "a@b"), Some(("['a@b']".to_string(), true)));
+        assert_eq!(merged("['x@y']", "a@b"), Some(("['x@y', 'a@b']".to_string(), true)));
+        assert_eq!(merged("['x@y','z@w']", "a@b"), Some(("['x@y', 'z@w', 'a@b']".to_string(), true)));
     }
 
     #[test]
     fn merging_is_idempotent_and_leaves_unparsable_settings_alone() {
-        assert_eq!(merged("['a@b']", "a@b"), Some("['a@b']".to_string()));
+        // Already there: no write, so `enable_uuid` doesn't report a fresh install either.
+        assert_eq!(merged("['a@b']", "a@b"), Some(("['a@b']".to_string(), false)));
+        assert_eq!(merged("@as ['a@b']", "a@b"), Some(("['a@b']".to_string(), false)));
         assert_eq!(merged("", "a@b"), None);
         assert_eq!(merged("{'keys': []}", "a@b"), None);
+    }
+
+    #[test]
+    fn the_logout_notice_only_follows_a_fresh_helper() {
+        // Just written or just enabled, and the running shell still hasn't loaded it: say it once.
+        assert!(needs_logout_notice(true, Some(false)));
+        // Loaded already, or nothing changed this start (a second launch before the logout).
+        assert!(!needs_logout_notice(true, Some(true)));
+        assert!(!needs_logout_notice(false, Some(false)));
+        // No `gnome-extensions` tool to ask, so we can't know: stay quiet.
+        assert!(!needs_logout_notice(true, None));
     }
 }
