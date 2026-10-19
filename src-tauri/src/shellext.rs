@@ -60,7 +60,8 @@ pub fn fullscreen_on(monitor: usize) -> bool {
                 return false;
             }
         };
-    match proxy.call::<_, (i32,), (bool,)>("IsFullscreen", &(monitor as i32,)) {            Ok((on,)) => {
+        match proxy.call::<_, (i32,), (bool,)>("IsFullscreen", &(monitor as i32,)) {
+            Ok((on,)) => {
                 FAILED_AT.with(|t| t.set(None));
                 on
             }
