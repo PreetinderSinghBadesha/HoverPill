@@ -49,14 +49,13 @@ pub fn fullscreen_on(monitor: usize) -> bool {
             *slot = Connection::session().ok();
         }
         let Some(conn) = slot.as_ref() else {
-            note_failure();
+            note_failure(|| "hoverpill: no session bus, so Wayland fullscreen apps can't be detected".into());
             return false;
         };
         let proxy = match Proxy::new(conn, NAME, PATH, NAME) {
             Ok(proxy) => proxy,
             Err(e) => {
-                eprintln!("hoverpill: can't reach {NAME}: {e}");
-                note_failure();
+                note_failure(|| format!("hoverpill: can't reach {NAME}: {e}"));
                 return false;
             }
         };
@@ -66,18 +65,23 @@ pub fn fullscreen_on(monitor: usize) -> bool {
                 on
             }
             Err(e) => {
-                // The extension not being loaded yet (fresh install) is the
-                // normal case and says itself in the error; one line is enough.
-                eprintln!("hoverpill: {NAME}.IsFullscreen: {e}");
-                note_failure();
+                note_failure(|| format!("hoverpill: {NAME}.IsFullscreen: {e}"));
                 false
             }
         }
     })
 }
 
-fn note_failure() {
-    FAILED_AT.with(|t| t.set(Some(Instant::now())));
+/// Records a failed poll. Only the first failure in a run of them is reported: on a system
+/// without the extension (or before the logout a fresh install needs) polling fails every few
+/// seconds, and a line each time would drown the log.
+fn note_failure(message: impl FnOnce() -> String) {
+    FAILED_AT.with(|t| {
+        if t.get().is_none() {
+            eprintln!("{}", message());
+        }
+        t.set(Some(Instant::now()));
+    });
 }
 
 /// Writes the extension if it's missing or changed, makes sure GNOME will load
@@ -90,15 +94,18 @@ pub fn install(app: &AppHandle) {
     let Some(home) = app.path().home_dir().ok() else { return };
     let dir = home.join(".local/share/gnome-shell/extensions").join(UUID);
 
-    let wrote_meta = update(&dir.join("metadata.json"), METADATA).unwrap_or_default();
-    let wrote_js = update(&dir.join("extension.js"), EXTENSION).unwrap_or_default();
-    let fresh = wrote_meta || wrote_js;
-    enable_uuid(app);
-    if fresh && !extension_loaded() {
+    let _ = update(&dir.join("metadata.json"), METADATA);
+    let _ = update(&dir.join("extension.js"), EXTENSION);
+    let enabled = enable_uuid(app);
+    // GNOME reads the extensions directory once, at session start, so a helper installed (or
+    // re-enabled) while the session is running answers nothing until the next login. Say so on
+    // every start until it's loaded: someone who installs HoverPill, quits it and starts it again
+    // days later would otherwise never learn why fullscreen hiding does nothing on Wayland.
+    if enabled && extension_loaded() == Some(false) {
         events::notify(
             app,
-            "Firefox and other Wayland apps can now hide the notch",
-            "Log out once so GNOME loads the helper; after that fullscreen in native Wayland apps hides the notch too.",
+            "HoverPill: one logout to finish setup",
+            "Log out and back in once so the Wayland fullscreen helper can load. After that, fullscreen apps hide the notch too.",
         );
     }
 }
@@ -142,17 +149,17 @@ fn merged(list: &str, uuid: &str) -> Option<String> {
     })
 }
 
-/// Adds our uuid to the enabled extensions. The running shell only knows about
-/// extensions loaded at session start, but the setting persists, so the next
-/// login picks both the files and the enablement up in one go.
-fn enable_uuid(app: &AppHandle) {
+/// Adds our uuid to the enabled extensions; `true` once the setting is as we want it. The running
+/// shell only knows about extensions loaded at session start, but the setting persists, so the
+/// next login picks both the files and the enablement up in one go.
+fn enable_uuid(app: &AppHandle) -> bool {
     let out = Command::new("gsettings").args(["get", "org.gnome.shell", "enabled-extensions"]).output();
-    let Ok(out) = out else { return };
+    let Ok(out) = out else { return false };
     if !out.status.success() {
-        return;
+        return false;
     }
     let Some(new_list) = merged(&String::from_utf8_lossy(&out.stdout), UUID) else {
-        return;
+        return false;
     };
     let applied = Command::new("gsettings")
         .args(["set", "org.gnome.shell", "enabled-extensions", &new_list])
@@ -161,12 +168,14 @@ fn enable_uuid(app: &AppHandle) {
     if !applied {
         events::notify(app, "Can't enable the Wayland fullscreen helper", "Reinstall HoverPill or enable the extension by hand (GNOME Extensions).");
     }
+    applied
 }
 
-/// Whether the running session has the extension loaded (i.e. the user has
-/// logged out since it was installed).
-fn extension_loaded() -> bool {
-    Command::new("gnome-extensions").args(["info", UUID]).status().is_ok_and(|status| status.success())
+/// Whether the running session has the extension loaded (i.e. the user has logged out since it was
+/// installed). `None` when there is no `gnome-extensions` tool to ask; its output is captured
+/// rather than printed, so a missing extension says nothing on stderr.
+fn extension_loaded() -> Option<bool> {
+    Command::new("gnome-extensions").args(["info", UUID]).output().ok().map(|out| out.status.success())
 }
 
 #[cfg(test)]
