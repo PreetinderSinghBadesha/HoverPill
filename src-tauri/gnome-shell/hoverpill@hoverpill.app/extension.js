@@ -50,8 +50,10 @@ export default class Hoverpill {
      * The primary check is the same one GNOME itself uses when switching
      * workspaces: a normal, non-hidden window with the fullscreen flag on that
      * monitor. The frame-rect comparison is a fallback for windows that cover
-     * the monitor entirely without the flag; a merely maximised window always
-     * leaves the top bar area uncovered by design, so it can never pass.
+     * the monitor entirely without the flag. A maximized window is excluded from
+     * that fallback: normally the top bar keeps it a few pixels short of the
+     * monitor, but on a desktop that hides the top bar it can cover it exactly,
+     * and hiding the pill behind every maximized window would be wrong.
      * Windows on other workspaces are simply not in the list.
      */
     IsFullscreen(monitor) {
@@ -69,6 +71,9 @@ export default class Hoverpill {
             }
             if (window.is_fullscreen() && window.get_monitor() === monitor) {
                 return true;
+            }
+            if (window.is_maximized()) {
+                continue;
             }
             const frame = window.get_frame_rect();
             if (frame.x <= monitorRect.x && frame.y <= monitorRect.y
