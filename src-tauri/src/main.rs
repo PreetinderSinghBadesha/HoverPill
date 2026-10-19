@@ -8,6 +8,8 @@ mod broker;
 mod events;
 mod notch;
 mod settings;
+#[cfg(target_os = "linux")]
+mod shellext;
 mod tray;
 #[cfg(windows)]
 mod winvd;
@@ -90,6 +92,11 @@ fn main() {
             // way.
             pill.show()?;
             pill.set_ignore_cursor_events(true)?;
+            // Install (and keep current) the GNOME extension that reports
+            // fullscreen state for native Wayland apps; see `shellext.rs`.
+            // The hit-test loop falls back to X11 if it isn't loaded.
+            #[cfg(target_os = "linux")]
+            shellext::install(app.handle());
             notch::spawn_hit_test_loop(pill);
 
             app.manage(broker::Broker::load(app.handle())?);

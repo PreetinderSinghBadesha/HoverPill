@@ -1,0 +1,7 @@
+{
+    "uuid": "hoverpill@hoverpill.app",
+    "name": "HoverPill fullscreen awareness",
+    "description": "Tells HoverPill over D-Bus when a fullscreen app covers a monitor, so the notch can hide behind native Wayland apps (which it cannot see over XWayland). Installed and enabled automatically by HoverPill.",
+    "url": "https://github.com/akshatnathani/HoverPill",
+    "shell-version": ["45", "46", "47", "48", "49", "50"]
+}

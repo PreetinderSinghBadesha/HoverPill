@@ -58,7 +58,7 @@ npm run tauri dev
   - Pointing at the closed notch fades it out so you can see what's underneath.
   - With nothing happening, it shrinks to a thin bar.
   - It hides while a fullscreen app (video, game, presentation, F11 browser) covers its screen.
-    - **On Linux** it only sees apps running through X11/XWayland. A window that talks to the compositor directly (native Wayland) can't be detected, so the notch stays put.
+    - **On Linux** apps running through X11/XWayland are watched directly. For apps talking to the compositor directly (native Wayland — Firefox on Ubuntu does this by default, `MOZ_ENABLE_WAYLAND=0` forces it into X11 mode), HoverPill installs a small GNOME Shell helper the first time it runs and asks you to log out once; after that login it can hide behind fullscreen Wayland apps on GNOME too (KDE/wlroots remain X11-only).
   - "Keep windows below the notch" in Settings reserves a strip at the top, like a taskbar, so maximised windows start below it. Windows only.
   - If you prefer opening the notch by resting the pointer on it for about half a second, turn that on in Settings. It replaces the fade.
 - **Inside the open notch,** tabs switch between:

@@ -38,6 +38,9 @@ windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Securit
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
 x11-dl = "2"
+# Client for the GNOME Shell extension that reports fullscreen state for native
+# Wayland apps (see `shellext.rs`).
+zbus = "5"
 
 [profile.release]
 lto = true

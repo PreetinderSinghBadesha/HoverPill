@@ -23,6 +23,8 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, State, WebviewWindow};
 
 use crate::appbar;
+#[cfg(target_os = "linux")]
+use crate::shellext;
 use crate::settings::{Display, SettingsStore};
 
 pub const LABEL: &str = "pill";
@@ -525,8 +527,28 @@ fn fullscreen_app_on(win: &WebviewWindow, geo: &Geometry) -> bool {
 }
 
 #[cfg(target_os = "linux")]
-fn fullscreen_app_on(_win: &WebviewWindow, geo: &Geometry) -> bool {
-    x11::fullscreen_app_on(geo.bounds())
+fn fullscreen_app_on(win: &WebviewWindow, geo: &Geometry) -> bool {
+    // Native Wayland apps first (the companion extension), then plain X11
+    // clients, which are what the X11 module can see.
+    shellext::fullscreen_on(monitor_index(win)) || x11::fullscreen_app_on(geo.bounds())
+}
+
+/// Index of the pill's monitor in GNOME's monitor list — the shell extension
+/// identifies monitors by index, and GDK under XWayland enumerates the same
+/// outputs in the same order as the window manager. `usize::MAX` when the
+/// monitor can't be matched, to which the extension answers "no".
+#[cfg(target_os = "linux")]
+fn monitor_index(win: &WebviewWindow) -> usize {
+    let Ok(monitors) = win.available_monitors() else { return usize::MAX };
+    // `target()` picks the very monitor the notch is on, so match by its name.
+    let wanted = win
+        .try_state::<SettingsStore>()
+        .map(|store| store.get().display.monitor)
+        .unwrap_or_default();
+    let Ok(chosen) = chosen_monitor(win, wanted.as_deref()) else { return usize::MAX };
+    let Some(name) = chosen.name() else { return usize::MAX };
+    let name = name.clone();
+    monitors.iter().position(|monitor| monitor.name().is_some_and(|other| other == &name)).unwrap_or(usize::MAX)
 }
 
 #[cfg(not(any(windows, target_os = "linux")))]
