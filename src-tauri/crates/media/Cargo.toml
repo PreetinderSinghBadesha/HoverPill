@@ -5,7 +5,7 @@ description = "System now-playing info and transport controls (GSMTC on Windows,
 edition = "2021"
 
 [dependencies]
-base64 = "0.22"
+base64 = "0.23"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [

@@ -5,7 +5,7 @@ description = "Mirror other apps' desktop notifications (UserNotificationListene
 edition = "2021"
 
 [dependencies]
-base64 = "0.22"
+base64 = "0.23"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [

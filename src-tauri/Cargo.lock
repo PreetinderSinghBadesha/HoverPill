@@ -1729,7 +1729,7 @@ dependencies = [
 name = "hoverpill"
 version = "0.2.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "futures-util",
  "gdkx11",
  "getrandom 0.4.3",
@@ -1756,7 +1756,7 @@ dependencies = [
 name = "hoverpill-media"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "windows",
  "windows-future",
  "zbus",
@@ -1766,7 +1766,7 @@ dependencies = [
 name = "hoverpill-notify"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "png 0.18.1",
  "windows",
  "windows-future",
