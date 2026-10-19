@@ -25,7 +25,7 @@ tauri-plugin-single-instance = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "http2"] }
 futures-util = "0.3"
 sha2 = "0.11"
-base64 = "0.22"
+base64 = "0.23"
 # Since 10, the crypto backend must be chosen explicitly; without one, verifying a token panics.
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 
