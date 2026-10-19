@@ -1,5 +1,5 @@
-# Builds the Windows installer and the Linux packages (.deb and AppImage) when a version tag is
-# pushed, and attaches them all to one draft release for that tag. Write the notes on GitHub,
+# Builds the Windows installer and the Linux packages (.deb, .rpm and AppImage) when a version tag
+# is pushed, and attaches them all to one draft release for that tag. Write the notes on GitHub,
 # then publish the draft.
 #
 #   1. Bump the version in package.json, src-tauri/Cargo.toml and src-tauri/tauri.conf.json.
@@ -58,7 +58,7 @@ jobs:
           releaseBody: &release-body |-
             **Windows:** download HoverPill ___VERSION___ x64-setup.exe below and run it. It installs for your user account, with no admin rights needed. If Windows SmartScreen stops it, choose More info, then Run anyway.
 
-            **Linux:** download the `.AppImage` (make it executable with `chmod +x`, then run it) or the `.deb`. Linux support is new — if something doesn't work, please open an issue.
+            **Linux:** download the `.deb` (Debian, Ubuntu), the `.rpm` (Fedora, RHEL, openSUSE) or the `.AppImage` (any distribution; make it executable with `chmod +x`, then run it). Linux support is new — if something doesn't work, please open an issue.
           releaseDraft: true
           prerelease: false
 
@@ -106,8 +106,9 @@ jobs:
       - name: Install
         run: npm ci
 
-      # Bundles deb and AppImage (see src-tauri/tauri.linux.conf.json) and adds them to the
-      # same draft release the Windows job creates.
+      # Bundles the .deb, .rpm and AppImage (see src-tauri/tauri.linux.conf.json; Tauri writes the
+      # RPM itself, so no `rpm` tooling is needed here) and adds them to the same draft release the
+      # Windows job creates.
       - name: Build and attach the packages
         uses: tauri-apps/tauri-action@v1
         env: *release-env

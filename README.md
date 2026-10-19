@@ -15,7 +15,7 @@ Download the latest release from [GitHub Releases](https://github.com/Preetinder
 
 **Windows:** run `HoverPill_<version>_x64-setup.exe`. It isn't code-signed yet, so SmartScreen may stop it: choose **More info**, then **Run anyway**.
 
-**Linux:** each release also has a `.deb` and an AppImage. Install the `.deb` with your package manager, or make the AppImage executable and run it:
+**Linux:** each release also has a `.deb` (Debian, Ubuntu), an `.rpm` (Fedora, RHEL, openSUSE) and an AppImage (any distribution). Install the `.deb` or `.rpm` with your package manager, or make the AppImage executable and run it:
 
 ```bash
 chmod +x HoverPill_<version>_amd64.AppImage
@@ -32,7 +32,7 @@ npm run tauri build
 
 On Windows this produces `src-tauri/target/release/bundle/nsis/HoverPill_<version>_x64-setup.exe`, a 3 MB per-user installer. It needs no admin rights, adds HoverPill to the Start menu, and puts an uninstaller under Windows Settings › Apps.
 
-On Linux it produces a `.deb` and an AppImage under `src-tauri/target/release/bundle/`. The release build uses about 40 MB of memory.
+On Linux it produces a `.deb`, an `.rpm` and an AppImage under `src-tauri/target/release/bundle/`. The release build uses about 40 MB of memory.
 
 While the installed HoverPill is running, `npm run tauri dev` can't start a second copy. Only one HoverPill runs at a time, so the dev build just opens the installed copy's Settings and exits. Quit the installed one from its tray icon first.
 
@@ -122,7 +122,7 @@ To work on the UI in a normal browser, run `npm run dev` and open http://localho
 
 1. Bump the version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`, and commit.
 2. Tag and push: `git tag v0.3.0 && git push origin v0.3.0`.
-3. The [Release workflow](.github/workflows/release.yml) builds the Windows installer and the Linux `.deb` and AppImage, and attaches them all to one draft release for that tag. Add the notes on GitHub, then publish it.
+3. The [Release workflow](.github/workflows/release.yml) builds the Windows installer and the Linux `.deb`, `.rpm` and AppImage, and attaches them all to one draft release for that tag. Add the notes on GitHub, then publish it.
 
 The workflow refuses a tag that doesn't match the version in `tauri.conf.json`. To build a Google sign-in client into releases, so people can connect Google Calendar without making their own, add `HOVERPILL_GOOGLE_CLIENT_ID` and `HOVERPILL_GOOGLE_CLIENT_SECRET` as repository secrets.
 
