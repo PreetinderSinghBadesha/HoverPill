@@ -21,7 +21,7 @@ const SIZES: Record<View, Size> = {
   timer: { width: 210, height: 32, radius: 14 },
   alarm: { width: 440, height: 78, radius: 24 },
   notification: { width: 420, height: 78, radius: 24 },
-  permission: { width: 520, height: 204, radius: 26 },
+  permission: { width: 520, height: 260, radius: 26 },
   expanded: { width: 680, height: 300, radius: 30 },
 };
 

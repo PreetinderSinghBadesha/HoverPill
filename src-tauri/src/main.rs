@@ -8,6 +8,8 @@ mod broker;
 mod events;
 mod notch;
 mod settings;
+#[cfg(target_os = "linux")]
+mod shellext;
 mod tray;
 
 use tauri::Manager;
@@ -34,6 +36,7 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| settings::open_window(app)))
         .plugin(autostart::plugin())
         .manage(notch::HitState::default())
+        .manage(notch::HoverState::default())
         .manage(events::Outbox::default())
         .invoke_handler(tauri::generate_handler![
             notch::set_hit_rect,
@@ -77,8 +80,22 @@ fn main() {
                 .get_webview_window(notch::LABEL)
                 .ok_or("pill window missing from tauri.conf.json")?;
             notch::place_top_center(&pill)?;
-            pill.set_ignore_cursor_events(true)?;
+            // Apply the saved all-desktops choice at startup; `settings::apply` only runs it when
+            // the setting changes. On Linux this is a no-op until the GTK window is realized, so
+            // the hit-test loop re-applies it (see `STICKY_STATE` in notch.rs).
+            let all_workspaces = app.state::<SettingsStore>().get().display.all_workspaces;
+            notch::set_all_workspaces(&pill, all_workspaces);
+            // Show first: on Linux the GTK window has no gdk surface until it's realized, and
+            // set_ignore_cursor_events would panic on the missing surface. Windows is fine either
+            // way.
             pill.show()?;
+            pill.set_ignore_cursor_events(true)?;
+            // Apply the saved Wayland-helper choice: the GNOME extension that
+            // reports fullscreen state for native Wayland apps exists only
+            // while the user has it switched on; see `shellext.rs`.
+            // The hit-test loop falls back to X11 when it isn't installed.
+            #[cfg(target_os = "linux")]
+            shellext::sync(app.handle(), app.state::<SettingsStore>().get().display.gnome_helper);
             notch::spawn_hit_test_loop(pill);
 
             app.manage(broker::Broker::load(app.handle())?);

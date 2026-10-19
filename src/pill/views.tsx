@@ -89,6 +89,8 @@ export function NotificationView({ item, durationMs }: { item: NotificationItem;
 }
 
 export function PermissionView({ request, queued, onDecide }: { request: PermissionRequest; queued: number; onDecide: (d: Decision) => void }) {
+  // "Always allow" only makes sense when Claude offered a rule to remember.
+  const canAlwaysAllow = request.permission_suggestions?.some((s) => s.behavior === "allow") ?? false;
   return (
     <div className="card-permission">
       <div className="perm-header">
@@ -106,6 +108,11 @@ export function PermissionView({ request, queued, onDecide }: { request: Permiss
         </button>
       </div>
       <div className="perm-actions">
+        {canAlwaysAllow && (
+          <button type="button" className="btn btn-quiet" onClick={() => onDecide("always_allow")}>
+            Always allow
+          </button>
+        )}
         <button type="button" className="btn btn-quiet" onClick={() => onDecide("deny")}>
           Deny
         </button>
@@ -366,7 +373,7 @@ function NotificationsTab({ history, onClear, now }: { history: ReceivedNotifica
   );
 }
 
-const DECISION_TEXT: Record<Decision, string> = { allow: "Approved", deny: "Denied", ask: "Sent to terminal" };
+const DECISION_TEXT: Record<Decision, string> = { allow: "Approved", deny: "Denied", ask: "Sent to terminal", always_allow: "Always allowed" };
 
 function ClaudeTab({ decisions, now }: { decisions: PastDecision[]; now: Date }) {
   if (!decisions.length)

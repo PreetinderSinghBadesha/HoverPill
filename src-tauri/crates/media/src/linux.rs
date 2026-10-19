@@ -17,6 +17,10 @@ const PLAYER_IFACE: &str = "org.mpris.MediaPlayer2.Player";
 
 type Metadata = HashMap<String, OwnedValue>;
 
+/// `pick`'s result: the player to show (bus name and whether it's playing) plus every player's
+/// source for the Settings list.
+type Pick = (Option<(String, bool)>, Vec<Source>);
+
 pub struct Backend {
     conn: Connection,
     /// Bus name of the player being shown; kept while it's paused so the pill doesn't jump
@@ -61,7 +65,7 @@ impl Backend {
     /// Among players that aren't ignored: a playing one wins; then the one already shown if
     /// it's merely paused; then any paused one. Stopped players aren't shown. Also returns
     /// every player's source.
-    fn pick(&self, ignored: &HashSet<String>) -> Result<(Option<(String, bool)>, Vec<Source>), String> {
+    fn pick(&self, ignored: &HashSet<String>) -> Result<Pick, String> {
         let names = DBusProxy::new(&self.conn).map_err(err)?.list_names().map_err(|e| e.to_string())?;
         let players: Vec<String> =
             names.iter().map(|n| n.as_str().to_string()).filter(|n| n.starts_with(BUS_PREFIX)).collect();

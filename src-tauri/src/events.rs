@@ -45,12 +45,40 @@ pub fn pill_ready(app: AppHandle, outbox: State<Outbox>) {
     }
 }
 
+/// Claude Code sends these in camelCase (`toolName`, `ruleContent`), and expects the same names
+/// back in `updatedPermissions`; the field names stay snake_case in Rust.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionRule {
+    pub tool_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rule_content: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionSuggestion {
+    pub r#type: Option<String>,
+    #[serde(default)]
+    pub rules: Vec<PermissionRule>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub behavior: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub destination: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub directories: Vec<String>,
+}
+
 #[derive(Clone, Serialize)]
 pub struct PermissionRequest {
     pub id: String,
     pub tool: String,
     pub command: String,
     pub cwd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission_suggestions: Option<Vec<PermissionSuggestion>>,
 }
 
 /// The request went away without an answer from the pill (Claude was interrupted, or timed out).
@@ -92,6 +120,8 @@ pub enum Decision {
     Deny,
     /// Hand the question back to Claude Code's own terminal prompt.
     Ask,
+    #[serde(rename = "always_allow")]
+    AlwaysAllow,
 }
 
 #[derive(Debug, Deserialize)]
@@ -118,7 +148,8 @@ impl From<hoverpill_notify::Notification> for NotificationItem {
 }
 
 #[tauri::command]
-pub fn resolve_permission(id: String, decision: Decision, broker: State<Broker>) {    if !broker.resolve(&id, decision) {
+pub fn resolve_permission(id: String, decision: Decision, broker: State<Broker>) {
+    if !broker.resolve(&id, decision) {
         // Demo cards from the tray, or a request Claude already abandoned.
         println!("hoverpill: no pending Claude request {id}");
     }
@@ -137,4 +168,18 @@ pub fn media_command(action: MediaAction, media: State<Media>) {
 #[tauri::command]
 pub fn current_media(media: State<Media>, settings: State<SettingsStore>) -> Option<MediaState> {
     media.current().filter(|_| settings.get().media.enabled).map(MediaState::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decisions_deserialize_from_the_ui() {
+        let parse = |s: &str| serde_json::from_str::<Decision>(s).unwrap();
+        assert!(matches!(parse(r#""allow""#), Decision::Allow));
+        assert!(matches!(parse(r#""deny""#), Decision::Deny));
+        assert!(matches!(parse(r#""ask""#), Decision::Ask));
+        assert!(matches!(parse(r#""always_allow""#), Decision::AlwaysAllow));
+    }
 }

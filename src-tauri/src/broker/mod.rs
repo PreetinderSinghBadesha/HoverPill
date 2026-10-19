@@ -39,6 +39,8 @@ struct HookInput {
     #[serde(default)]
     tool_input: Value,
     cwd: Option<String>,
+    #[serde(default)]
+    permission_suggestions: Vec<events::PermissionSuggestion>,
 }
 
 pub struct Broker {
@@ -64,11 +66,11 @@ impl Broker {
         }
     }
 
-    fn register(&self) -> (String, oneshot::Receiver<Decision>) {
-        let id = events::next_id("claude");
+    /// Registers a pending request under `id` and returns the receiver its decision arrives on.
+    fn register(&self, id: String) -> oneshot::Receiver<Decision> {
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().unwrap().insert(id.clone(), tx);
-        (id, rx)
+        self.pending.lock().unwrap().insert(id, tx);
+        rx
     }
 
     fn forget(&self, id: &str) {
@@ -159,37 +161,56 @@ async fn handle(app: &AppHandle, mut stream: TcpStream) -> std::io::Result<()> {
         Err(e) => return http::respond(&mut stream, 400, "text/plain", e.to_string().as_bytes()).await,
     };
 
-    let (id, decision) = broker.register();
     let summary = summary::summarize(&input.tool_name, &input.tool_input);
-    events::send(app, "pill:permission", PermissionRequest { id: id.clone(), tool: summary.tool, command: summary.text, cwd: input.cwd });
-
-    let decision = tokio::select! {
+    let suggestions = if input.permission_suggestions.is_empty() { None } else { Some(input.permission_suggestions) };
+    let id = events::next_id("claude");
+    let req = PermissionRequest { id: id.clone(), tool: summary.tool, command: summary.text, cwd: input.cwd, permission_suggestions: suggestions };
+    let decision = broker.register(id.clone());
+    events::send(app, "pill:permission", req.clone());
+    let decision_result = tokio::select! {
         d = decision => d.unwrap_or(Decision::Ask),
         // The user interrupted Claude (or it timed out): nobody is listening for an answer.
         _ = http::closed(&mut stream) => {
             broker.forget(&id);
-            events::send(app, "pill:permission-cancel", PermissionCancel { id });
+            events::send(app, "pill:permission-cancel", PermissionCancel { id: id.clone() });
             return Ok(());
         }
         _ = tokio::time::sleep(DECISION_TIMEOUT) => {
             broker.forget(&id);
-            events::send(app, "pill:permission-cancel", PermissionCancel { id });
+            events::send(app, "pill:permission-cancel", PermissionCancel { id: id.clone() });
             Decision::Ask
         }
     };
 
-    match hook_response(&decision) {
+    match hook_response(&decision_result, &req) {
         Some(body) => http::respond(&mut stream, 200, "application/json", body.to_string().as_bytes()).await,
         // An empty 2xx is "no decision": Claude Code shows its usual terminal prompt.
         None => http::respond(&mut stream, 200, "text/plain", b"").await,
     }
 }
 
-fn hook_response(decision: &Decision) -> Option<Value> {
+/// The suggestion to remember when the user picks "Always allow": an explicit "allow" rule from
+/// Claude, preferring `addRules` (that is what the button promises). `None` means there is
+/// nothing worth persisting, so the card still just approves this one request.
+fn allow_suggestion(request: &PermissionRequest) -> Option<&events::PermissionSuggestion> {
+    let suggestions = request.permission_suggestions.as_deref()?;
+    suggestions
+        .iter()
+        .find(|s| s.behavior.as_deref() == Some("allow") && s.r#type.as_deref() == Some("addRules"))
+        .or_else(|| suggestions.iter().find(|s| s.behavior.as_deref() == Some("allow")))
+}
+
+fn hook_response(decision: &Decision, request: &PermissionRequest) -> Option<Value> {
     let decision = match decision {
         Decision::Allow => json!({ "behavior": "allow" }),
         Decision::Deny => json!({ "behavior": "deny", "message": DENY_MESSAGE }),
         Decision::Ask => return None,
+        Decision::AlwaysAllow => match allow_suggestion(request) {
+            // Hand the rule back so Claude Code remembers it; names go out in camelCase.
+            Some(suggestion) => json!({ "behavior": "allow", "updatedPermissions": [suggestion] }),
+            // No usable suggestion: approve this one request rather than sending a null update.
+            None => json!({ "behavior": "allow" }),
+        },
     };
     Some(json!({ "hookSpecificOutput": { "hookEventName": "PermissionRequest", "decision": decision } }))
 }
@@ -202,17 +223,81 @@ mod tests {
         Broker { token: token.into(), pending: Mutex::default() }
     }
 
+    fn request(suggestions: Option<Vec<events::PermissionSuggestion>>) -> PermissionRequest {
+        PermissionRequest { id: "claude-1".into(), tool: "Bash".into(), command: "npm test".into(), cwd: Some("/work".into()), permission_suggestions: suggestions }
+    }
+
+    /// The shape Claude Code actually posts: snake_case envelope, camelCase rule fields.
+    const HOOK_PAYLOAD: &str = r#"{
+        "session_id": "s1",
+        "hook_event_name": "PermissionRequest",
+        "tool_name": "Bash",
+        "tool_input": { "command": "npm test" },
+        "cwd": "/work",
+        "permission_suggestions": [
+            {
+                "type": "addRules",
+                "rules": [{ "toolName": "Bash", "ruleContent": "npm test" }],
+                "behavior": "allow",
+                "destination": "localSettings"
+            }
+        ]
+    }"#;
+
     #[test]
     fn responses_match_hook_schema() {
-        let allow = hook_response(&Decision::Allow).unwrap();
+        let req = request(None);
+        let allow = hook_response(&Decision::Allow, &req).unwrap();
         assert_eq!(allow["hookSpecificOutput"]["hookEventName"], "PermissionRequest");
         assert_eq!(allow["hookSpecificOutput"]["decision"], json!({ "behavior": "allow" }));
 
-        let deny = hook_response(&Decision::Deny).unwrap();
+        let deny = hook_response(&Decision::Deny, &req).unwrap();
         assert_eq!(deny["hookSpecificOutput"]["decision"]["behavior"], "deny");
         assert_eq!(deny["hookSpecificOutput"]["decision"]["message"], DENY_MESSAGE);
 
-        assert!(hook_response(&Decision::Ask).is_none());
+        assert!(hook_response(&Decision::Ask, &req).is_none());
+    }
+
+    #[test]
+    fn parses_a_hook_payload_with_suggestions() {
+        let input: HookInput = serde_json::from_str(HOOK_PAYLOAD).expect("camelCase suggestions must parse");
+        assert_eq!(input.tool_name, "Bash");
+        assert_eq!(input.permission_suggestions.len(), 1);
+        let rule = &input.permission_suggestions[0].rules[0];
+        assert_eq!(rule.tool_name, "Bash");
+        assert_eq!(rule.rule_content.as_deref(), Some("npm test"));
+    }
+
+    #[test]
+    fn always_allow_returns_the_suggestion_in_camel_case() {
+        let input: HookInput = serde_json::from_str(HOOK_PAYLOAD).unwrap();
+        let req = request(Some(input.permission_suggestions));
+        let body = hook_response(&Decision::AlwaysAllow, &req).unwrap();
+        let decision = &body["hookSpecificOutput"]["decision"];
+        assert_eq!(decision["behavior"], "allow");
+        let rule = &decision["updatedPermissions"][0]["rules"][0];
+        assert_eq!(rule["toolName"], "Bash");
+        assert_eq!(rule["ruleContent"], "npm test");
+        assert!(rule.get("tool_name").is_none(), "names must go back out in camelCase");
+    }
+
+    #[test]
+    fn always_allow_without_an_allow_suggestion_is_a_plain_allow() {
+        // No suggestions at all.
+        let body = hook_response(&Decision::AlwaysAllow, &request(None)).unwrap();
+        assert_eq!(body["hookSpecificOutput"]["decision"], json!({ "behavior": "allow" }));
+
+        // A suggestion that only denies is nothing to remember either.
+        let deny_only = events::PermissionSuggestion {
+            r#type: Some("addRules".into()),
+            rules: Vec::new(),
+            behavior: Some("deny".into()),
+            destination: None,
+            mode: None,
+            directories: Vec::new(),
+        };
+        let body = hook_response(&Decision::AlwaysAllow, &request(Some(vec![deny_only]))).unwrap();
+        assert_eq!(body["hookSpecificOutput"]["decision"], json!({ "behavior": "allow" }));
     }
 
     #[test]
@@ -228,9 +313,9 @@ mod tests {
     #[test]
     fn resolve_delivers_once() {
         let b = broker("t");
-        let (id, mut rx) = b.register();
-        assert!(b.resolve(&id, Decision::Deny));
+        let mut rx = b.register("claude-1".into());
+        assert!(b.resolve("claude-1", Decision::Deny));
         assert!(matches!(rx.try_recv(), Ok(Decision::Deny)));
-        assert!(!b.resolve(&id, Decision::Allow), "a second answer must be ignored");
+        assert!(!b.resolve("claude-1", Decision::Allow), "a second answer must be ignored");
     }
 }

@@ -91,6 +91,7 @@ fn demo_permission(app: &AppHandle) {
             tool: "Bash".into(),
             command: "git push --force-with-lease origin feature/hoverpill".into(),
             cwd: Some("D:/projects/HoverPill".into()),
+            permission_suggestions: None,
         },
     );
 }

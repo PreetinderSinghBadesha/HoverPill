@@ -2,16 +2,31 @@
 
 export type Rect = { x: number; y: number; width: number; height: number };
 
+export type PermissionRule = {
+  toolName: string;
+  ruleContent?: string;
+};
+
+export type PermissionSuggestion = {
+  type: string;
+  rules?: PermissionRule[];
+  behavior?: "allow" | "deny" | "ask";
+  destination?: string;
+  mode?: string;
+  directories?: string[];
+};
+
 export type PermissionRequest = {
   id: string;
   tool: string;
   /** Human-readable summary of what Claude wants to do (shell command, file path, ...). */
   command: string;
   cwd?: string;
+  permission_suggestions?: PermissionSuggestion[];
 };
 
 /** "ask" hands the question back to Claude Code's own terminal prompt. */
-export type Decision = "allow" | "deny" | "ask";
+export type Decision = "allow" | "deny" | "ask" | "always_allow";
 
 export type NotificationItem = {
   id: string;
@@ -93,8 +108,12 @@ export type Settings = {
     compactIdle: boolean;
     /** Hide while a fullscreen app covers the notch's monitor. */
     hideInFullscreen: boolean;
+    /** Install and enable the GNOME Shell helper for native Wayland fullscreen apps (GNOME only). */
+    gnomeHelper: boolean;
     /** Reserve a strip at the top so maximised windows start below the notch (Windows only). */
     reserveSpace: boolean;
+    /** Show the pill on every virtual desktop / workspace, not just the one it was opened on. */
+    allWorkspaces: boolean;
   };
   notifications: {
     enabled: boolean;
@@ -120,8 +139,21 @@ export type Settings = {
   };
 };
 
+/** Mirrors the platform-aware default in src-tauri/src/settings.rs (`Display::default`). */
+export const IS_LINUX = typeof navigator !== "undefined" && navigator.userAgent.includes("Linux");
+
 export const DEFAULT_SETTINGS: Settings = {
-  display: { monitor: null, topOffset: 0, scale: 1, openOnHover: false, compactIdle: true, hideInFullscreen: true, reserveSpace: false },
+  display: {
+    monitor: null,
+    topOffset: 0,
+    scale: 1,
+    openOnHover: false,
+    compactIdle: true,
+    hideInFullscreen: true,
+    gnomeHelper: false,
+    reserveSpace: false,
+    allWorkspaces: IS_LINUX,
+  },
   notifications: { enabled: true, durationSecs: 4.5, blockedApps: [] },
   media: { enabled: true, ignoredPlayers: [] },
   calendar: { enabled: true, reminderMinutes: 5, clientId: "", clientSecret: "" },
