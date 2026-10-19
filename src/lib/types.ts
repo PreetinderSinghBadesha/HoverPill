@@ -7,15 +7,6 @@ export type PermissionRule = {
   ruleContent?: string;
 };
 
-export type PermissionUpdate = {
-  type: "addRules" | "replaceRules" | "removeRules" | "setMode" | "addDirectories" | "removeDirectories";
-  rules?: PermissionRule[];
-  behavior?: "allow" | "deny" | "ask";
-  destination?: "session" | "localSettings" | "projectSettings" | "userSettings";
-  mode?: string;
-  directories?: string[];
-};
-
 export type PermissionSuggestion = {
   type: string;
   rules?: PermissionRule[];
