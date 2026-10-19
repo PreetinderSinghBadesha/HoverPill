@@ -32,11 +32,13 @@ jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
-# GTK/GDK for shaping the X input region under XWayland (see `set_input_region` in notch.rs),
-# and libX11 (through x11-dl) to spot a fullscreen app worth hiding behind (see
+# GTK/GDK for shaping the X input region under XWayland (see `set_input_region` in notch.rs) and
+# for reaching our own X window to take the keyboard while the user types (`gdkx11::X11Window`),
+# plus libX11 (through x11-dl) to spot a fullscreen app worth hiding behind (see
 # `fullscreen_app_on`).
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
+gdkx11 = "0.18"
 x11-dl = "2"
 # Client for the GNOME Shell extension that reports fullscreen state for native
 # Wayland apps (see `shellext.rs`).

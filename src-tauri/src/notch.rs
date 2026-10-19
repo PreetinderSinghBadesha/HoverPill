@@ -80,8 +80,47 @@ pub fn notch_typing(active: bool, app: AppHandle, state: State<HitState>) {
         let _ = win.set_focusable(active);
         if active {
             let _ = win.set_focus();
+            #[cfg(target_os = "linux")]
+            grab_keyboard(&win);
         }
     }
+}
+
+/// Hand the keyboard to the notch while the text box is focused.
+///
+/// A click alone can't do it on Linux: the window is mapped with the "does not accept input
+/// focus" hint (that's what keeps the pill from ever pulling you out of your terminal), and the
+/// window manager has already refused to focus us by the time the text box sees the click.
+/// Lifting the hint and asking again doesn't help either - tao asks with a zero timestamp, which
+/// is refused as focus stealing, and the window manager ignores the changed hint for the focus
+/// decision. So once the text box takes focus, ask the X server for the keyboard directly;
+/// XWayland passes that on to the compositor. Only ever called while typing: the rest of the
+/// time the notch must not be focusable.
+#[cfg(target_os = "linux")]
+fn grab_keyboard(win: &WebviewWindow) {
+    use x11_dl::xlib::{CurrentTime, RevertToParent, Window, Xlib};
+
+    let win = win.clone();
+    let handle = win.clone();
+    let _ = handle.run_on_main_thread(move || {
+        use gtk::prelude::*;
+        let Ok(gtk_win) = win.gtk_window() else { return };
+        let Some(gdk_win) = gtk_win.window() else { return };
+        // Only the X11 backend has an X window to focus; under a native Wayland backend the
+        // downcast fails and there is nothing to do (the Linux preflight settles on X11 anyway).
+        let Ok(x11_win) = gdk_win.downcast::<gdkx11::X11Window>() else { return };
+        let xid: Window = x11_win.xid();
+        let Ok(xlib) = Xlib::open() else { return };
+        // SAFETY: a short-lived connection of our own; `XCloseDisplay` flushes the request.
+        unsafe {
+            let display = (xlib.XOpenDisplay)(std::ptr::null());
+            if display.is_null() {
+                return;
+            }
+            (xlib.XSetInputFocus)(display, xid, RevertToParent, CurrentTime);
+            (xlib.XCloseDisplay)(display);
+        }
+    });
 }
 
 /// `interactive`: the notch is open, or shows something that must be clickable. Otherwise it
