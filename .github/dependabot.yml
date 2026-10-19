@@ -9,6 +9,11 @@ updates:
     groups:
       npm-minor-and-patch:
         update-types: [minor, patch]
+    ignore:
+      # The types follow the Node version we build with (22, see the workflows), not the newest
+      # Node release; move them up when the workflows move to a new Node major.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: cargo
     directory: /src-tauri
