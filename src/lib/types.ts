@@ -108,6 +108,8 @@ export type Settings = {
     compactIdle: boolean;
     /** Hide while a fullscreen app covers the notch's monitor. */
     hideInFullscreen: boolean;
+    /** Install and enable the GNOME Shell helper for native Wayland fullscreen apps (GNOME only). */
+    gnomeHelper: boolean;
     /** Reserve a strip at the top so maximised windows start below the notch (Windows only). */
     reserveSpace: boolean;
     /** Show the pill on every virtual desktop / workspace, not just the one it was opened on. */
@@ -138,7 +140,7 @@ export type Settings = {
 };
 
 /** Mirrors the platform-aware default in src-tauri/src/settings.rs (`Display::default`). */
-const IS_LINUX = typeof navigator !== "undefined" && navigator.userAgent.includes("Linux");
+export const IS_LINUX = typeof navigator !== "undefined" && navigator.userAgent.includes("Linux");
 
 export const DEFAULT_SETTINGS: Settings = {
   display: {
@@ -148,6 +150,7 @@ export const DEFAULT_SETTINGS: Settings = {
     openOnHover: false,
     compactIdle: true,
     hideInFullscreen: true,
+    gnomeHelper: false,
     reserveSpace: false,
     allWorkspaces: IS_LINUX,
   },

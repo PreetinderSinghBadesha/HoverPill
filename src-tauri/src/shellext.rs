@@ -4,13 +4,15 @@
 //! (Firefox on Ubuntu, GTK4 apps) paints over it invisibly: it has no X window,
 //! and every shell introspection API is allowlisted for the desktop portals
 //! alone, so no app can query GNOME about Wayland windows. On GNOME this
-//! module installs a tiny companion extension owned above and available on the
-//! session bus as `org.hoverpill.Notch`, which answers
-//! `IsFullscreen(monitor)` from inside the shell; GNOME only loads extensions
-//! at session start, so a fresh install takes one logout. Elsewhere (KDE,
-//! wlroots) there is nothing to install into and polling just fails, so
-//! fullscreen hiding stays X11-only until a KWin/foreign-toplevel bridge
-//! exists.
+//! module can install a tiny companion extension owned above and available on
+//! the session bus as `org.hoverpill.Notch`, which answers
+//! `IsFullscreen(monitor)` from inside the shell. Whether it exists is the
+//! user's call — the `gnomeHelper` display setting is off by default, and the
+//! extension is installed and enabled only while it's on, then removed again.
+//! GNOME only loads extensions at session start, so a fresh install takes one
+//! logout. Elsewhere (KDE, wlroots) there is nothing to install into and
+//! polling just fails, so fullscreen hiding stays X11-only until a
+//! KWin/foreign-toplevel bridge exists.
 
 use std::cell::{Cell, RefCell};
 use std::path::Path;
@@ -84,29 +86,74 @@ fn note_failure(message: impl FnOnce() -> String) {
     });
 }
 
-/// Writes the extension if it's missing or changed, makes sure GNOME will load
-/// it, and tells the user once about the one logout a fresh install needs. A
-/// no-op off GNOME. Called once at startup.
-pub fn install(app: &AppHandle) {
+/// What to do to the helper on disk. `on` is the setting; `installed` says whether its files are
+/// already there.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Plan {
+    /// Write the files and add our uuid: a helper that wasn't there at all is one the user asked
+    /// for.
+    Install,
+    /// Keep the files current but leave `enabled-extensions` alone. Whether an installed helper
+    /// runs is the user's call — a switch-off in GNOME's Extensions app has to stick.
+    KeepFiles,
+    /// Remove the files and our uuid.
+    Remove,
+}
+
+fn plan(on: bool, installed: bool) -> Plan {
+    match (on, installed) {
+        (false, _) => Plan::Remove,
+        (true, false) => Plan::Install,
+        (true, true) => Plan::KeepFiles,
+    }
+}
+
+/// Applies the helper setting. Switched on it writes the extension if it's missing or changed and
+/// enables it — but only when it wasn't installed at all, so a helper the user turned off in
+/// GNOME's own Extensions app stays off. Switched off it removes the files and drops our uuid,
+/// which unloads a running helper and its bus name. A no-op off GNOME. Called once at startup and
+/// again whenever the setting changes.
+pub fn sync(app: &AppHandle, on: bool) {
     if !gnome_session() {
         return;
     }
     let Some(home) = app.path().home_dir().ok() else { return };
     let dir = home.join(".local/share/gnome-shell/extensions").join(UUID);
 
+    let plan = plan(on, dir.exists());
+    if plan == Plan::Remove {
+        remove(&dir);
+        disable_uuid();
+        return;
+    }
+
     // Both writes are wanted even when the first one says "already current".
     let wrote = update(&dir.join("metadata.json"), METADATA).unwrap_or(false)
         | update(&dir.join("extension.js"), EXTENSION).unwrap_or(false);
-    let enabled = matches!(enable_uuid(app), Enabled::Added);
+    // Only a helper that wasn't on disk at this start gets its uuid added: one that was already
+    // there is the user's to enable, and adding the uuid back would undo their switch-off.
+    let enabled = if plan == Plan::Install { enable_uuid(app) } else { Enabled::LeftAlone };
     // GNOME reads the extensions directory once, at session start, so a helper just installed (or
     // just enabled) while the session is running answers nothing until the next login. Say so
     // when that happens — not at every start, which would nag the user who already knows.
-    if needs_logout_notice(wrote || enabled, extension_loaded()) {
+    if needs_logout_notice(wrote || matches!(enabled, Enabled::Added), extension_loaded()) {
         events::notify(
             app,
             "HoverPill: one logout to finish setup",
             "Log out and back in once so the Wayland fullscreen helper can load. After that, fullscreen apps hide the notch too.",
         );
+    }
+}
+
+/// Takes the helper off disk. Quiet: switching the setting off shouldn't produce a notification.
+/// A running shell unloads it as soon as `disable_uuid` — which `sync` calls next — drops the
+/// uuid, and the bus name goes with it.
+fn remove(dir: &Path) {
+    match std::fs::remove_dir_all(dir) {
+        Ok(()) => {}
+        // The ordinary case: the setting was already off.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => eprintln!("hoverpill: can't remove {}: {e}", dir.display()),
     }
 }
 
@@ -136,16 +183,22 @@ fn update(path: &Path, contents: &str) -> std::io::Result<bool> {
     Ok(true)
 }
 
-/// Merges `uuid` into the text of the `enabled-extensions` array as `gsettings
-/// get` prints it. `None` when the text isn't a recognizable array, in which
-/// case the user's setting is left alone. The flag says whether the uuid was
-/// missing, i.e. whether there is anything worth writing back.
-fn merged(list: &str, uuid: &str) -> Option<(String, bool)> {
+/// The trimmed text of the `enabled-extensions` array and its items, as `gsettings get` prints
+/// them. `None` when the text isn't a recognizable array, in which case the user's setting is
+/// left alone.
+fn array_items(list: &str) -> Option<(&str, Vec<&str>)> {
     // GVariant prints the empty array of a non-defaulted type as `@as []`.
     let value = list.trim();
     let value = value.strip_prefix("@as").map(str::trim_start).unwrap_or(value);
     let inner = value.strip_prefix('[')?.strip_suffix(']')?;
-    let items: Vec<&str> = inner.split(',').map(str::trim).filter(|item| !item.is_empty()).collect();
+    let items = inner.split(',').map(str::trim).filter(|item| !item.is_empty()).collect();
+    Some((value, items))
+}
+
+/// Merges `uuid` into the text of the `enabled-extensions` array. The flag says whether the uuid
+/// was missing, i.e. whether there is anything worth writing back.
+fn merged(list: &str, uuid: &str) -> Option<(String, bool)> {
+    let (value, items) = array_items(list)?;
     if items.iter().any(|item| item.contains(uuid)) {
         return Some((value.to_string(), false));
     }
@@ -157,6 +210,19 @@ fn merged(list: &str, uuid: &str) -> Option<(String, bool)> {
     Some((text, true))
 }
 
+/// The other direction: drops `uuid` from the text of the `enabled-extensions` array. The flag
+/// says whether the uuid was there, i.e. whether there is anything worth writing back.
+fn pruned(list: &str, uuid: &str) -> Option<(String, bool)> {
+    let (value, items) = array_items(list)?;
+    let kept: Vec<&str> = items.iter().copied().filter(|item| !item.contains(uuid)).collect();
+    if kept.len() == items.len() {
+        return Some((value.to_string(), false));
+    }
+    // `@as []` rather than `[]`: an empty literal has no type for GVariant to infer.
+    let text = if kept.is_empty() { "@as []".to_string() } else { format!("[{}]", kept.join(", ")) };
+    Some((text, true))
+}
+
 /// What making sure our uuid is in `enabled-extensions` did.
 #[derive(Clone, Copy)]
 enum Enabled {
@@ -164,6 +230,8 @@ enum Enabled {
     Already,
     /// It was missing and has just been added.
     Added,
+    /// The helper was on disk already, so its enablement is the user's to set; untouched.
+    LeftAlone,
     /// `gsettings` isn't there, refused, or the list can't be parsed.
     Failed,
 }
@@ -195,6 +263,31 @@ fn enable_uuid(app: &AppHandle) -> Enabled {
     Enabled::Added
 }
 
+/// The other half of `enable_uuid`: drops our uuid from the enabled extensions, which makes a
+/// running shell unload the helper and release `org.hoverpill.Notch`. `gsettings` refusing is
+/// logged, not notified — the files are gone either way, and a stale uuid in the list is inert.
+fn disable_uuid() {
+    let out = Command::new("gsettings").args(["get", "org.gnome.shell", "enabled-extensions"]).output();
+    let Ok(out) = out else { return };
+    if !out.status.success() {
+        return;
+    }
+    let current = String::from_utf8_lossy(&out.stdout);
+    let Some((new_list, removing)) = pruned(&current, UUID) else {
+        return;
+    };
+    if !removing {
+        return;
+    }
+    let applied = Command::new("gsettings")
+        .args(["set", "org.gnome.shell", "enabled-extensions", &new_list])
+        .status()
+        .is_ok_and(|status| status.success());
+    if !applied {
+        eprintln!("hoverpill: can't remove {UUID} from the enabled extensions");
+    }
+}
+
 /// Whether the running session has the extension loaded (i.e. the user has logged out since it was
 /// installed). `None` when there is no `gnome-extensions` tool to ask; its output is captured
 /// rather than printed, so a missing extension says nothing on stderr.
@@ -204,7 +297,7 @@ fn extension_loaded() -> Option<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::{merged, needs_logout_notice};
+    use super::{merged, needs_logout_notice, plan, pruned, Plan};
 
     #[test]
     fn merges_into_every_shape_gsettings_prints() {
@@ -221,6 +314,29 @@ mod tests {
         assert_eq!(merged("@as ['a@b']", "a@b"), Some(("['a@b']".to_string(), false)));
         assert_eq!(merged("", "a@b"), None);
         assert_eq!(merged("{'keys': []}", "a@b"), None);
+    }
+
+    #[test]
+    fn prunes_the_uuid_and_leaves_the_rest_alone() {
+        assert_eq!(pruned("['a@b']", "a@b"), Some(("@as []".to_string(), true)));
+        assert_eq!(pruned("@as ['a@b']", "a@b"), Some(("@as []".to_string(), true)));
+        assert_eq!(pruned("['a@b', 'x@y']", "a@b"), Some(("['x@y']".to_string(), true)));
+        assert_eq!(pruned("['x@y']", "a@b"), Some(("['x@y']".to_string(), false)));
+        assert_eq!(pruned("@as []", "a@b"), Some(("[]".to_string(), false)));
+        assert_eq!(pruned("", "a@b"), None);
+        assert_eq!(pruned("{'keys': []}", "a@b"), None);
+    }
+
+    #[test]
+    fn an_installed_helper_is_left_to_the_user() {
+        // Switching off always takes the helper away, installed or not.
+        assert_eq!(plan(false, true), Plan::Remove);
+        assert_eq!(plan(false, false), Plan::Remove);
+        // Switching on installs and enables what isn't there yet, but never puts the uuid back
+        // into a helper that is already installed: turning it off in GNOME's own Extensions app
+        // has to stick across restarts.
+        assert_eq!(plan(true, false), Plan::Install);
+        assert_eq!(plan(true, true), Plan::KeepFiles);
     }
 
     #[test]

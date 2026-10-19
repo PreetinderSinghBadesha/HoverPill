@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 
 import { getVersion } from "@tauri-apps/api/app";
 import { getAutostart, inTauri, listMonitors, mediaPlayers, notifyingApps, recentNotificationApps, setAutostart } from "../lib/bridge";
 import { useEditableSettings } from "../lib/useSettings";
-import { DEFAULT_SETTINGS, RANGES, type MonitorInfo, type PlayerInfo, type Settings } from "../lib/types";
+import { DEFAULT_SETTINGS, IS_LINUX, RANGES, type MonitorInfo, type PlayerInfo, type Settings } from "../lib/types";
 import { Section, SelectRow, SliderRow, SwitchRow, ToggleList } from "./controls";
 import { AccountsTab } from "./AccountsTab";
 import mark from "../../assets/brand/hoverpill-icon.svg";
@@ -227,6 +227,14 @@ function DisplayTab({ settings, update }: { settings: Settings; update: Update }
           checked={d.hideInFullscreen}
           onChange={(hideInFullscreen) => setDisplay({ hideInFullscreen })}
         />
+        {IS_LINUX && (
+          <SwitchRow
+            title="GNOME Shell helper for Wayland fullscreen"
+            description="Installs and enables a small GNOME Shell extension so apps that talk to Wayland directly (Firefox, GTK4 apps) hide the notch behind them too. It needs one logout to load. X11 apps are detected either way, and a helper you switch off in GNOME's Extensions app stays off."
+            checked={d.gnomeHelper}
+            onChange={(gnomeHelper) => setDisplay({ gnomeHelper })}
+          />
+        )}
         <SwitchRow
           title="Keep windows below the notch"
           description={

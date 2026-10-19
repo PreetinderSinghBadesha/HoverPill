@@ -92,11 +92,12 @@ fn main() {
             // way.
             pill.show()?;
             pill.set_ignore_cursor_events(true)?;
-            // Install (and keep current) the GNOME extension that reports
-            // fullscreen state for native Wayland apps; see `shellext.rs`.
-            // The hit-test loop falls back to X11 if it isn't loaded.
+            // Apply the saved Wayland-helper choice: the GNOME extension that
+            // reports fullscreen state for native Wayland apps exists only
+            // while the user has it switched on; see `shellext.rs`.
+            // The hit-test loop falls back to X11 when it isn't installed.
             #[cfg(target_os = "linux")]
-            shellext::install(app.handle());
+            shellext::sync(app.handle(), app.state::<SettingsStore>().get().display.gnome_helper);
             notch::spawn_hit_test_loop(pill);
 
             app.manage(broker::Broker::load(app.handle())?);

@@ -34,6 +34,10 @@ pub struct Display {
     pub compact_idle: bool,
     /// Get out of the way while a fullscreen app covers the notch's monitor.
     pub hide_in_fullscreen: bool,
+    /// Install and enable the GNOME Shell helper that spots native Wayland fullscreen apps
+    /// (GNOME only, off by default): it writes into the user's extensions directory, which is the
+    /// desktop's business until the user asks for it.
+    pub gnome_helper: bool,
     /// Reserve a strip at the top of the monitor (like a taskbar) so maximised windows start
     /// below the notch. Windows only.
     pub reserve_space: bool,
@@ -94,6 +98,7 @@ impl Default for Display {
             open_on_hover: false,
             compact_idle: true,
             hide_in_fullscreen: true,
+            gnome_helper: false,
             reserve_space: false,
             all_workspaces: cfg!(target_os = "linux"),
         }
@@ -330,9 +335,17 @@ pub fn get_settings(store: State<SettingsStore>) -> Settings {
 #[tauri::command]
 pub fn set_settings(app: AppHandle, store: State<SettingsStore>, settings: Settings) -> Result<Settings, String> {
     let settings = settings.sanitized();
+    // The Wayland helper writes into the user's GNOME extensions, so only a change of that
+    // setting should touch them: any other save must leave a helper the user removed alone.
+    #[cfg(target_os = "linux")]
+    let helper_changed = store.get().display.gnome_helper != settings.display.gnome_helper;
     store.save(&settings)?;
     *store.current.write().unwrap() = settings.clone();
     apply(&app, &settings);
+    #[cfg(target_os = "linux")]
+    if helper_changed {
+        crate::shellext::sync(&app, settings.display.gnome_helper);
+    }
     Ok(settings)
 }
 
@@ -347,6 +360,9 @@ mod tests {
         assert_eq!(s.display.top_offset, 0.0);
         assert!(!s.display.open_on_hover && s.display.compact_idle && s.display.hide_in_fullscreen);
         assert!(!s.display.reserve_space);
+        // The GNOME helper touches the desktop's own extensions directory, so it waits to be asked
+        // for, whatever the platform.
+        assert!(!s.display.gnome_helper);
         assert_eq!(s.display.all_workspaces, cfg!(target_os = "linux"));
         assert!(s.notifications.enabled);
     }
