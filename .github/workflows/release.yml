@@ -64,7 +64,9 @@ jobs:
 
   linux:
     name: Linux packages
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: the packages need the glibc they were built against or newer,
+    # so building on an older Ubuntu keeps them installable on more systems.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
