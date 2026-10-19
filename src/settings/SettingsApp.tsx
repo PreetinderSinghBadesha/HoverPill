@@ -223,7 +223,7 @@ function DisplayTab({ settings, update }: { settings: Settings; update: Update }
         />
         <SwitchRow
           title="Hide during fullscreen apps"
-          description="Videos, games and presentations get the whole screen. Claude Code requests still appear."
+          description="Videos, games and presentations get the whole screen. Notifications and Claude Code requests still appear."
           checked={d.hideInFullscreen}
           onChange={(hideInFullscreen) => setDisplay({ hideInFullscreen })}
         />
