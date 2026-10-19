@@ -56,7 +56,7 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: HoverPill __VERSION__
           releaseBody: &release-body |-
-            **Windows:** download HoverPill ___VERSION___ x64-setup.exe below and run it. It installs for your user account, with no admin rights needed. If Windows SmartScreen stops it, choose More info, then Run anyway.
+            **Windows:** download `HoverPill___VERSION___x64-setup.exe` below and run it. It installs for your user account, with no admin rights needed. If Windows SmartScreen stops it, choose More info, then Run anyway.
 
             **Linux:** download the `.deb` (Debian, Ubuntu), the `.rpm` (Fedora, RHEL, openSUSE) or the `.AppImage` (any distribution; make it executable with `chmod +x`, then run it). Linux support is new — if something doesn't work, please open an issue.
           releaseDraft: true
