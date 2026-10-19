@@ -56,10 +56,8 @@ export function Pill() {
   const accent = useArtworkColor(state.media?.artwork);
   const ref = useRef<HTMLDivElement>(null);
   const size = view === "idle" && settings.display.compactIdle ? IDLE_BAR : SIZES[view];
-  // Behind a fullscreen app only what arrives while you're watching (a notification) or is waiting
-  // on you (a Claude request, a finished timer) shows; the closed notch, media and the panel don't.
-  const hidden =
-    state.fullscreen && view !== "permission" && view !== "alarm" && view !== "notification";
+  // Behind a fullscreen app only what's waiting on you (a Claude request, a finished timer) shows.
+  const hidden = state.fullscreen && view !== "permission" && view !== "alarm";
   // Closed (and a passing notification) never takes clicks, so browser tabs underneath stay usable.
   const interactive = !hidden && (view === "expanded" || view === "permission" || view === "alarm");
   // Pointing at the closed notch fades it, unless resting is how you open it.
