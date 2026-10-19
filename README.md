@@ -77,7 +77,7 @@ The pill has no taskbar entry. Use the **tray icon** to open **Settings…**, to
 | Tab | What's there |
 |---|---|
 | General | Start at login, version |
-| Display | Which monitor, distance from the top edge (0 = attached notch, more = floating pill), size (80–140%), open on rest, shrink when idle, hide during fullscreen, keep windows below the notch, show on every virtual desktop |
+| Display | Which monitor, distance from the top edge (0 = attached notch, more = floating pill), size (80–140%), open on rest, shrink when idle, hide during fullscreen, keep windows below the notch, show on every workspace (Linux) |
 | Notifications | On/off, how long each card stays (2–15 s), per-app on/off: apps that recently sent notifications, plus every other app Windows lets notify |
 | Media | On/off, per-player on/off (e.g. hide a browser so the pill shows Spotify) |
 
@@ -140,7 +140,6 @@ src/                     React UI
   lib/bridge.ts          Tauri events and commands (no-ops in a plain browser)
 src-tauri/src/
   notch.rs               placement, always-on-top, click-through / X input region
-  winvd.rs               Windows: pin the pill to every virtual desktop (best-effort)
   broker/mod.rs          Claude Code permission broker (local HTTP server, pending decisions)
   broker/summary.rs      tool_input → readable card text
   broker/install.rs      add/remove the hook in ~/.claude/settings.json
@@ -158,5 +157,5 @@ src/settings/            the tabbed Settings window (settings.html)
 | | |
 |---|---|
 | ✅ Done | Floating window, selective click-through, spring animations, all views, Claude permission broker, media controller, notification stream, never steals focus, start at login, single instance, tabbed Settings window, Linux (XWayland) support with `.deb` and AppImage builds |
-| 🧪 Untested | "Show on every virtual desktop" on Windows (off by default there), and everything under a native Wayland session |
+| 🧪 Untested | Everything under a native Wayland session |
 | 🔜 Next | Wayland layer-shell (see the architecture doc) |

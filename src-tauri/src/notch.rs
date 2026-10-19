@@ -365,9 +365,9 @@ static HOVER_SIGNALS_CONNECTED: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "linux")]
 static STICKY_STATE: std::sync::atomic::AtomicI8 = std::sync::atomic::AtomicI8::new(-1);
 
-/// Keeps the pill on every virtual desktop / workspace. Linux asks the window manager to make the
-/// window sticky (`_NET_WM_STATE_STICKY` via GDK); Windows pins the window's view (`winvd`).
-/// Best-effort: on a platform/desktop that can't do it, the pill just stays on the current one.
+/// Keeps the pill on every virtual desktop / workspace. Linux only: the window manager is asked to
+/// make the window sticky (`_NET_WM_STATE_STICKY` via GDK). Windows has no documented way to do
+/// this, so there the pill stays on the desktop it was opened on.
 pub fn set_all_workspaces(win: &WebviewWindow, all: bool) {
     #[cfg(target_os = "linux")]
     {
@@ -386,9 +386,7 @@ pub fn set_all_workspaces(win: &WebviewWindow, all: bool) {
             STICKY_STATE.store(if all { 1 } else { 0 }, Ordering::Relaxed);
         });
     }
-    #[cfg(windows)]
-    crate::winvd::set_view_on_all_desktops(all, native_handle(win));
-    #[cfg(not(any(target_os = "linux", windows)))]
+    #[cfg(not(target_os = "linux"))]
     {
         let _ = (win, all);
     }

@@ -42,8 +42,7 @@ pub struct Display {
     /// below the notch. Windows only.
     pub reserve_space: bool,
     /// Show the pill on every virtual desktop / workspace, not just the one it was opened on.
-    /// On by default on Linux, where a sticky window is well supported; off on Windows, where
-    /// this goes through an undocumented shell interface (`winvd`) that isn't proven yet.
+    /// Linux only (a sticky window), on by default there; ignored on Windows.
     pub all_workspaces: bool,
 }
 

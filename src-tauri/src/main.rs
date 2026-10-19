@@ -11,8 +11,6 @@ mod settings;
 #[cfg(target_os = "linux")]
 mod shellext;
 mod tray;
-#[cfg(windows)]
-mod winvd;
 
 use tauri::Manager;
 
