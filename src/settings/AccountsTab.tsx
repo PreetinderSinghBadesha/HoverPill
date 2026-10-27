@@ -74,7 +74,11 @@ function GoogleSection({ account, settings, update, run }: { account: AccountSta
   const setCalendar = (patch: Partial<Settings["calendar"]>, debounceMs = 0) =>
     update((s) => ({ ...s, calendar: { ...s.calendar, ...patch } }), debounceMs);
   const hasClient = c.clientId.trim().length > 0;
-  const [showClient, setShowClient] = useState(!hasClient);
+  // With a client built in there's nothing to set up: the form only opens on request.
+  const [showClient, setShowClient] = useState(!hasClient && !account.builtInClient);
+  useEffect(() => {
+    if (account.builtInClient && !hasClient) setShowClient(false);
+  }, [account.builtInClient, hasClient]);
 
   return (
     <>
@@ -133,10 +137,16 @@ function GoogleSection({ account, settings, update, run }: { account: AccountSta
               </div>
             </div>
           </>
-        ) : (
-          <Row title="Client" description={<>Using client {c.clientId.slice(0, 18)}…</>}>
+        ) : hasClient ? (
+          <Row title="Client" description={<>Using your own client, {c.clientId.slice(0, 18)}…</>}>
             <button type="button" className="button" onClick={() => setShowClient(true)}>
               Change
+            </button>
+          </Row>
+        ) : (
+          <Row title="Client" description="Uses HoverPill's own Google sign-in, so there's nothing to set up. Choose Connect above.">
+            <button type="button" className="button" onClick={() => setShowClient(true)}>
+              Use your own
             </button>
           </Row>
         )}

@@ -85,6 +85,7 @@ impl Google {
             busy: s.busy,
             error: s.error.clone(),
             plan_usage: false,
+            built_in_client: option_env!("HOVERPILL_GOOGLE_CLIENT_ID").is_some_and(|id| !id.is_empty()),
         }
     }
 

@@ -96,6 +96,8 @@ export type AccountStatus = {
   error?: string;
   /** ChatGPT only: requests can use the user's ChatGPT plan. */
   planUsage: boolean;
+  /** Google only: the app has a sign-in client built in, so none needs setting up. */
+  builtInClient?: boolean;
 };
 
 export type AccountsStatus = { google: AccountStatus; chatgpt: AccountStatus };

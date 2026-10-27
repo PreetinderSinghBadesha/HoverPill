@@ -99,6 +99,7 @@ impl ChatGpt {
             busy: s.busy,
             error: s.error.clone(),
             plan_usage: s.saved.plan_usage(),
+            built_in_client: false,
         }
     }
 

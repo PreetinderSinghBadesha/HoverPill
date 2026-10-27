@@ -306,6 +306,8 @@ pub struct AccountStatus {
     pub error: Option<String>,
     /// ChatGPT only: requests can use the user's ChatGPT plan.
     pub plan_usage: bool,
+    /// Google only: this build has a sign-in client built in, so the user needn't make one.
+    pub built_in_client: bool,
 }
 
 #[derive(Clone, Serialize)]
