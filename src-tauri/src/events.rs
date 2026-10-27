@@ -37,6 +37,14 @@ pub fn send<S: Serialize + Clone>(app: &AppHandle, event: &str, payload: S) {
     let _ = app.emit(event, payload);
 }
 
+/// Puts text on the clipboard: a ChatGPT answer or one of its code blocks. The browser's own
+/// clipboard API won't work in the notch, which never takes focus while you're just pointing at it.
+#[tauri::command]
+pub fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    app.clipboard().write_text(text).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn pill_ready(app: AppHandle, outbox: State<Outbox>) {
     let queued = outbox.0.lock().unwrap().take();

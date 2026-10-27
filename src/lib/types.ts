@@ -149,6 +149,8 @@ export type Settings = {
   chatgpt: {
     /** Model slug; null uses the first one the account offers. */
     model: string | null;
+    /** Keys that open the ChatGPT tab from any app, like "Ctrl+Alt+G"; empty for none. */
+    shortcut: string;
   };
 };
 
@@ -170,7 +172,7 @@ export const DEFAULT_SETTINGS: Settings = {
   notifications: { enabled: true, durationSecs: 4.5, blockedApps: [] },
   media: { enabled: true, ignoredPlayers: [] },
   calendar: { enabled: true, reminderMinutes: 5, clientId: "", clientSecret: "" },
-  chatgpt: { model: null },
+  chatgpt: { model: null, shortcut: "Ctrl+Alt+G" },
 };
 
 export const RANGES = {

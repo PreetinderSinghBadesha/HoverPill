@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent } from "react";
 import { AnimatePresence, motion, useMotionValue, type Transition } from "motion/react";
-import { beginDrag, dockLayout, endDrag, inTauri, mediaCommand, on, openSettings, resolvePermission, setHitRect } from "../lib/bridge";
+import { beginDrag, dockLayout, endDrag, inTauri, mediaCommand, notchTyping, on, openSettings, resolvePermission, setHitRect } from "../lib/bridge";
 import { pickView, usePillState } from "../lib/usePillState";
 import { formatCountdown, formatElapsed, stopwatchElapsed, timerLeft, useTimers } from "../lib/useTimers";
 import { useLiveSettings } from "../lib/useSettings";
@@ -131,8 +131,9 @@ export function Pill() {
   const upright = side && CLOSED.includes(view);
   const flat = view === "idle" && settings.display.compactIdle ? IDLE_BAR : (side && SIDE_SIZES[view]) || SIZES[view];
   const size = drag ? BUBBLE_SIZE : upright ? { ...flat, width: flat.height, height: flat.width } : flat;
-  // Behind a fullscreen app only what's waiting on you (a Claude request, a finished timer) shows.
-  const hidden = state.fullscreen && view !== "permission" && view !== "alarm";
+  // Behind a fullscreen app only what's waiting on you (a Claude request, a finished timer) shows,
+  // or ChatGPT when its shortcut was pressed.
+  const hidden = state.fullscreen && view !== "permission" && view !== "alarm" && !state.asked;
   // Closed (and a passing notification) never takes clicks, so browser tabs underneath stay usable.
   const interactive = !hidden && !drag && (view === "expanded" || view === "permission" || view === "alarm");
   // Pointing at the closed notch fades it, unless resting is how you open it.
@@ -177,6 +178,21 @@ export function Pill() {
       moves.forEach((off) => off());
     };
   }, [scale, topOffset, interactive, free, known === null, x, y]);
+
+  // Opened by the ChatGPT shortcut, it has the keyboard until Esc or a click elsewhere. The
+  // question box hands it back itself when it loses focus; this covers the tab without one
+  // (signed out).
+  useEffect(() => {
+    if (!state.asked) return;
+    const release = () => notchTyping(false);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && release();
+    window.addEventListener("blur", release);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("blur", release);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [state.asked]);
 
   // ---------- Ctrl+drag ----------
 
@@ -326,6 +342,7 @@ export function Pill() {
                     calendar={state.calendar}
                     chat={chat}
                     chatgpt={accounts.chatgpt}
+                    asked={state.asked}
                   />
                 )}
               </motion.div>

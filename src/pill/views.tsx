@@ -15,6 +15,7 @@ import type {
   Tab,
 } from "../lib/types";
 import { Icon, type IconName } from "./icons";
+import { CopyButton, Markdown } from "./markdown";
 import { formatCountdown, formatElapsed, MAX_DURATION, stopwatchElapsed, timerLeft, type Timers } from "../lib/useTimers";
 
 // ---------- closed ----------
@@ -167,6 +168,8 @@ export type ExpandedProps = {
   calendar: CalendarEvent[];
   chat: Chat;
   chatgpt: AccountStatus;
+  /** When the ChatGPT shortcut opened the notch (ms), or 0. */
+  asked: number;
 };
 
 export function ExpandedView(props: ExpandedProps) {
@@ -219,7 +222,7 @@ export function ExpandedView(props: ExpandedProps) {
           {props.tab === "timer" && <TimerTab timers={props.timers} />}
           {props.tab === "notifications" && <NotificationsTab history={props.history} onClear={props.onClearHistory} now={now} />}
           {props.tab === "claude" && <ClaudeTab decisions={props.decisions} now={now} />}
-          {props.tab === "chatgpt" && <ChatGptTab chat={props.chat} account={props.chatgpt} onSettings={props.onSettings} />}
+          {props.tab === "chatgpt" && <ChatGptTab chat={props.chat} account={props.chatgpt} onSettings={props.onSettings} asked={props.asked} />}
         </motion.div>
       </AnimatePresence>
     </div>
@@ -427,7 +430,7 @@ function ClaudeTab({ decisions, now }: { decisions: PastDecision[]; now: Date })
 
 // ---------- ChatGPT tab ----------
 
-function ChatGptTab({ chat, account, onSettings }: { chat: Chat; account: AccountStatus; onSettings: () => void }) {
+function ChatGptTab({ chat, account, onSettings, asked }: { chat: Chat; account: AccountStatus; onSettings: () => void; asked: number }) {
   if (!account.connected)
     return (
       <EmptyState icon="chat" title="Ask ChatGPT from the notch">
@@ -446,10 +449,10 @@ function ChatGptTab({ chat, account, onSettings }: { chat: Chat; account: Accoun
         </button>
       </EmptyState>
     );
-  return <ChatPanel chat={chat} onSettings={onSettings} />;
+  return <ChatPanel chat={chat} onSettings={onSettings} asked={asked} />;
 }
 
-function ChatPanel({ chat, onSettings }: { chat: Chat; onSettings: () => void }) {
+function ChatPanel({ chat, onSettings, asked }: { chat: Chat; onSettings: () => void; asked: number }) {
   const [draft, setDraft] = useState("");
   const input = useRef<HTMLTextAreaElement>(null);
   const log = useRef<HTMLDivElement>(null);
@@ -462,6 +465,11 @@ function ChatPanel({ chat, onSettings }: { chat: Chat; onSettings: () => void })
 
   // Leaving the tab (or the notch folding up) gives the keyboard back.
   useEffect(() => () => notchTyping(false), []);
+
+  // Opened by the ChatGPT shortcut just now: straight into the question box.
+  useEffect(() => {
+    if (asked && Date.now() - asked < 2000) input.current?.focus();
+  }, [asked]);
 
   const send = () => {
     if (!draft.trim() || busy) return;
@@ -480,16 +488,22 @@ function ChatPanel({ chat, onSettings }: { chat: Chat; onSettings: () => void })
     <div className="chat">
       <div className="chat-log" ref={log}>
         {turns.length === 0 && !pending && <p className="chat-hint">Ask anything. Answers use your ChatGPT plan and aren't saved.</p>}
-        {turns.map((t, i) => (
-          <p key={i} className={`chat-turn is-${t.role}`}>
-            {t.text}
-          </p>
-        ))}
+        {turns.map((t, i) =>
+          t.role === "user" ? (
+            <p key={i} className="chat-turn is-user">
+              {t.text}
+            </p>
+          ) : (
+            <div key={i} className="chat-turn is-assistant">
+              <Markdown text={t.text} />
+              <CopyButton text={t.text} label="Copy answer" className="answer-copy" />
+            </div>
+          ),
+        )}
         {pending && (
-          <p className="chat-turn is-assistant">
-            {pending.text}
-            {!pending.error && <span className="chat-caret" aria-hidden />}
-          </p>
+          <div className="chat-turn is-assistant">
+            <Markdown text={pending.text} trailing={!pending.error && <span className="chat-caret" aria-hidden />} />
+          </div>
         )}
         {pending?.error && (
           <p className="chat-error" role="alert">

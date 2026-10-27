@@ -68,6 +68,7 @@ npm run tauri dev
   - **Timer:** a countdown (presets from 1 minute to 1 hour, ±1 minute) and a stopwatch with laps. While either runs, the closed notch shows the time. When a timer ends, a "Time's up" card drops down with a chime and +1 min / Done buttons, even over fullscreen apps.
   - **Notifications:** everything received this session
   - **Claude:** your recent permission decisions
+  - **ChatGPT:** ask a question and the answer streams in, using your ChatGPT plan (sign in under Settings › Accounts). **Ctrl + Alt + G** opens this tab from any app, ready to type; Esc or a click elsewhere closes it. Pick other keys, or turn the shortcut off, in Settings › Accounts.
 
   The gear button opens Settings.
 

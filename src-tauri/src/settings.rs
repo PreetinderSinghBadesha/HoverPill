@@ -76,11 +76,19 @@ pub struct Calendar {
     pub client_secret: String,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ChatGpt {
     /// Model slug; `None` uses the first one the account offers.
     pub model: Option<String>,
+    /// Keys that open the ChatGPT tab from any app, like "Ctrl+Alt+G"; empty for none.
+    pub shortcut: String,
+}
+
+impl Default for ChatGpt {
+    fn default() -> Self {
+        Self { model: None, shortcut: "Ctrl+Alt+G".into() }
+    }
 }
 
 pub const TOP_OFFSET_RANGE: (f64, f64) = (0.0, 48.0);
@@ -155,6 +163,7 @@ impl Settings {
         self.calendar.client_id = self.calendar.client_id.trim().to_string();
         self.calendar.client_secret = self.calendar.client_secret.trim().to_string();
         self.chatgpt.model = self.chatgpt.model.filter(|m| !m.trim().is_empty());
+        self.chatgpt.shortcut = self.chatgpt.shortcut.trim().to_string();
         self
     }
 
@@ -219,6 +228,7 @@ pub fn apply(app: &AppHandle, settings: &Settings) {
         }
         crate::notch::set_all_workspaces(&pill, settings.display.all_workspaces);
     }
+    crate::shortcut::apply(app, &settings.chatgpt.shortcut);
     let _ = app.emit("settings:changed", settings);
 }
 
@@ -379,6 +389,7 @@ mod tests {
         assert!(!s.display.gnome_helper);
         assert_eq!(s.display.all_workspaces, cfg!(target_os = "linux"));
         assert!(s.notifications.enabled);
+        assert_eq!(s.chatgpt.shortcut, "Ctrl+Alt+G");
     }
 
     #[test]

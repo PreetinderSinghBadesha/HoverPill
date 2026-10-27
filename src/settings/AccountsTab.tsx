@@ -9,6 +9,17 @@ type Update = (change: (s: Settings) => Settings, debounceMs?: number) => void;
 const CLOUD_CONSOLE = "https://console.cloud.google.com/apis/credentials";
 const AUTO_MODEL = "__auto__";
 
+/** Keys for the ChatGPT shortcut. Each must parse in Rust (see the test in shortcut.rs). */
+const NO_SHORTCUT = "__none__";
+const SHORTCUTS = [
+  { value: "Ctrl+Alt+G", label: "Ctrl + Alt + G" },
+  { value: "Ctrl+Shift+Space", label: "Ctrl + Shift + Space" },
+  { value: "Alt+Shift+Space", label: "Alt + Shift + Space" },
+  { value: "Ctrl+Alt+Space", label: "Ctrl + Alt + Space" },
+  { value: "Alt+Space", label: "Alt + Space" },
+  { value: NO_SHORTCUT, label: "Off" },
+];
+
 /** Google Calendar and ChatGPT: connect, disconnect, and the choices that go with each. */
 export function AccountsTab({ settings, update }: { settings: Settings; update: Update }) {
   const { google, chatgpt } = useAccounts();
@@ -206,7 +217,14 @@ function ChatGptSection({ account, settings, update, run }: { account: AccountSt
             description="The models your ChatGPT plan offers to apps."
             value={model ?? AUTO_MODEL}
             options={options}
-            onChange={(v) => update((s) => ({ ...s, chatgpt: { model: v === AUTO_MODEL ? null : v } }))}
+            onChange={(v) => update((s) => ({ ...s, chatgpt: { ...s.chatgpt, model: v === AUTO_MODEL ? null : v } }))}
+          />
+          <SelectRow
+            title="Shortcut"
+            description="Opens the notch's ChatGPT tab from any app, ready to type. Esc or a click elsewhere closes it."
+            value={settings.chatgpt.shortcut || NO_SHORTCUT}
+            options={SHORTCUTS}
+            onChange={(v) => update((s) => ({ ...s, chatgpt: { ...s.chatgpt, shortcut: v === NO_SHORTCUT ? "" : v } }))}
           />
           <Row title="Usage" description="Answers count against your ChatGPT plan's limits, the same as using ChatGPT itself.">
             <button type="button" className="button" onClick={openChatGptUsage}>

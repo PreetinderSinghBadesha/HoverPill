@@ -25,6 +25,8 @@ const PATHS = {
   clear: "M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12",
   video: "M4 7.5h10.5v9H4zM14.5 10.5l5-3v9l-5-3",
   calendar: "M5 6h14v14H5zM5 10h14M9 3.5v4M15 3.5v4",
+  copy: "M9 9h10v10H9zM15 9V5H5v10h4",
+  check: "M5 12.5l4.5 4.5L19 7.5",
 } as const;
 
 export type IconName = keyof typeof PATHS;

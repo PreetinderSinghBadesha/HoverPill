@@ -11,6 +11,7 @@ mod notch;
 mod settings;
 #[cfg(target_os = "linux")]
 mod shellext;
+mod shortcut;
 mod tray;
 
 use tauri::Manager;
@@ -36,6 +37,8 @@ fn main() {
         // HoverPill again is a natural way to look for its settings, so open them.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| settings::open_window(app)))
         .plugin(autostart::plugin())
+        .plugin(shortcut::plugin())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(notch::HitState::default())
         .manage(notch::HoverState::default())
         .manage(notch::DragState::default())
@@ -47,6 +50,7 @@ fn main() {
             events::media_command,
             events::current_media,
             events::pill_ready,
+            events::copy_text,
             settings::get_settings,
             settings::open_settings,
             settings::set_settings,
@@ -129,6 +133,7 @@ fn main() {
                 hoverpill_notify::Event::Unavailable(reason) => events::notify(&handle, "Notifications unavailable", &reason),
             });
 
+            shortcut::apply(app.handle(), &app.state::<SettingsStore>().get().chatgpt.shortcut);
             accounts::google::spawn(app.handle().clone());
             autostart::refresh(app.handle());
             tray::init(app)?;

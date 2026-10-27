@@ -34,9 +34,15 @@ const VAULT_KEY: &str = "chatgpt";
 /// Where people manage plan usage and connected apps.
 pub const USAGE_URL: &str = "https://chatgpt.com/#settings/Usage";
 
-/// What answers sound like in a notch.
-const INSTRUCTIONS: &str = "You are answering inside HoverPill, a small notch at the top of the user's screen. \
-Keep answers short and direct: a sentence or a few short lines. Use plain text; no headings or tables.";
+/// How to answer: as well and as fully as ChatGPT itself. The notch renders the usual Markdown
+/// (see src/pill/markdown.tsx); it's a small panel, so big headings are discouraged.
+const INSTRUCTIONS: &str = "You are ChatGPT, answering inside HoverPill, a small panel on the user's screen. \
+Give a genuinely helpful, accurate and complete answer, as you would in ChatGPT: explain the why when it helps, \
+include the steps, examples or code the question needs, and match the length to the question, so a simple \
+question gets a short answer and a hard one gets a full one. Don't pad or repeat the question. \
+Format with Markdown as you normally would: short paragraphs, bullet and numbered lists, **bold** for key terms, \
+`inline code`, fenced code blocks, and tables when they genuinely help. The panel is narrow, so prefer lists to \
+wide tables, and use at most small headings.";
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct Saved {
@@ -425,6 +431,17 @@ pub fn chatgpt_stop(app: AppHandle, id: String) {
     }
 }
 
+/// The complete lines at the front of `buf`, decoded, leaving any partial line behind. Network
+/// chunks can end in the middle of a character (anything outside ASCII is several bytes), so
+/// bytes are only decoded once their whole line has arrived.
+fn take_lines(buf: &mut Vec<u8>) -> Vec<String> {
+    let Some(last) = buf.iter().rposition(|&b| b == b'\n') else { return Vec::new() };
+    let rest = buf.split_off(last + 1);
+    let lines = String::from_utf8_lossy(buf).lines().map(str::to_string).collect();
+    *buf = rest;
+    lines
+}
+
 /// Errors carry a message for the user, and whether it's the plan's usage limit.
 async fn ask(app: &AppHandle, id: &str, turns: Vec<Turn>) -> Result<(), (String, bool)> {
     let plain = |m: String| (m, false);
@@ -456,14 +473,12 @@ async fn ask(app: &AppHandle, id: &str, turns: Vec<Turn>) -> Result<(), (String,
 
     // Server-sent events: `data: {...}` lines, one JSON event each.
     let mut stream = res.bytes_stream();
-    let mut buf = String::new();
+    let mut buf = Vec::new();
     let mut completed = false;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| plain(format!("the answer was cut off: {e}")))?;
-        buf.push_str(&String::from_utf8_lossy(&chunk));
-        while let Some(end) = buf.find('\n') {
-            let line = buf[..end].trim_end_matches('\r').to_string();
-            buf.drain(..=end);
+        buf.extend_from_slice(&chunk);
+        for line in take_lines(&mut buf) {
             let Some(data) = line.strip_prefix("data:").map(str::trim) else { continue };
             if data == "[DONE]" {
                 continue;
@@ -543,6 +558,28 @@ mod tests {
 
     fn claims(aud: &str, nonce: &str) -> Value {
         json!({ "iss": ISSUER, "aud": aud, "sub": "user-1", "email": "a@example.com", "nonce": nonce, "exp": now_secs() + 600 })
+    }
+
+    #[test]
+    fn a_character_split_across_chunks_survives() {
+        let event = "data: {\"delta\":\"café ✓\"}\n";
+        let bytes = event.as_bytes();
+        // Cut inside the "é" (two bytes) and again inside the "✓" (three).
+        let cut = event.find('é').unwrap() + 1;
+        let mut buf = bytes[..cut].to_vec();
+        assert!(take_lines(&mut buf).is_empty());
+        buf.extend_from_slice(&bytes[cut..bytes.len() - 4]);
+        assert!(take_lines(&mut buf).is_empty());
+        buf.extend_from_slice(&bytes[bytes.len() - 4..]);
+        assert_eq!(take_lines(&mut buf), vec![event.trim_end().to_string()]);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn keeps_the_partial_line_for_later() {
+        let mut buf = b"data: one\r\ndata: two\ndata: thr".to_vec();
+        assert_eq!(take_lines(&mut buf), vec!["data: one", "data: two"]);
+        assert_eq!(buf, b"data: thr");
     }
 
     #[test]

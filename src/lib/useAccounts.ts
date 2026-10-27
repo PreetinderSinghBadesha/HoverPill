@@ -31,17 +31,23 @@ export function useChat() {
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [pending, setPending] = useState<Pending | null>(null);
   const pendingRef = useRef<Pending | null>(null);
-  pendingRef.current = pending;
+  // Pieces of an answer often arrive several to a frame, before React re-renders, so each one
+  // builds on this ref, updated here and now, not on the last render's copy (which would drop
+  // every piece but the last of each frame).
+  const update = (next: Pending | null) => {
+    pendingRef.current = next;
+    setPending(next);
+  };
 
   useEffect(() => {
     const sub = on("pill:chatgpt", (chunk) => {
       const current = pendingRef.current;
       if (!current || chunk.id !== current.id) return;
-      if (chunk.kind === "delta") setPending({ ...current, text: current.text + chunk.text });
-      if (chunk.kind === "error") setPending({ ...current, error: chunk.message, usage: chunk.usage });
+      if (chunk.kind === "delta") update({ ...current, text: current.text + chunk.text });
+      if (chunk.kind === "error") update({ ...current, error: chunk.message, usage: chunk.usage });
       if (chunk.kind === "done") {
         if (current.text) setTurns((t) => [...t, { role: "assistant", text: current.text }]);
-        setPending(null);
+        update(null);
       }
     });
     return () => sub.off();
@@ -53,7 +59,7 @@ export function useChat() {
     const next: ChatTurn[] = [...turns, { role: "user", text }];
     const id = crypto.randomUUID();
     setTurns(next);
-    setPending({ id, text: "" });
+    update({ id, text: "" });
     askChatGpt(id, next.slice(-CONTEXT_TURNS));
   };
 
@@ -62,13 +68,13 @@ export function useChat() {
     if (!pending) return;
     stopChatGpt(pending.id);
     if (pending.text) setTurns((t) => [...t, { role: "assistant", text: pending.text }]);
-    setPending(null);
+    update(null);
   };
 
   const clear = () => {
     if (pending && !pending.error) stopChatGpt(pending.id);
     setTurns([]);
-    setPending(null);
+    update(null);
   };
 
   return { turns, pending, ask, stop, clear, busy: !!pending && !pending.error };

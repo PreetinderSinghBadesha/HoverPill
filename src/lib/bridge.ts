@@ -30,6 +30,8 @@ export type PillEvents = {
   "pill:peek": boolean;
   /** A fullscreen app covers the notch's monitor. */
   "pill:fullscreen": boolean;
+  /** The ChatGPT shortcut was pressed: show the ChatGPT tab, ready to type. */
+  "pill:ask": null;
   /** Ctrl is held over the closed notch: it will take a click, to be dragged. */
   "pill:grab": boolean;
   /** Became the notch, docked somewhere else, moved, or was dropped after a drag. */
@@ -181,6 +183,12 @@ export function askChatGpt(id: string, turns: ChatTurn[]) {
 
 export function stopChatGpt(id: string) {
   if (inTauri) invoke("chatgpt_stop", { id }).catch(console.error);
+}
+
+/** Puts text on the clipboard (through Rust: the notch isn't focused, so the browser API refuses). */
+export async function copyText(text: string): Promise<void> {
+  if (inTauri) await invoke("copy_text", { text });
+  else await navigator.clipboard.writeText(text);
 }
 
 /** Opens an https link (a calendar event, a video call) in the default browser. */

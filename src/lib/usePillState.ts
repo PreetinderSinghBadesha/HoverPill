@@ -28,6 +28,8 @@ type State = {
   decisions: PastDecision[];
   /** Upcoming Google Calendar events, soonest first. */
   calendar: CalendarEvent[];
+  /** When the ChatGPT shortcut opened it (ms), until it closes again; 0 otherwise. */
+  asked: number;
 };
 
 type Action =
@@ -42,7 +44,8 @@ type Action =
   | { type: "permission"; value: PermissionRequest }
   | { type: "decide"; id: string; decision: Decision }
   | { type: "cancelPermission"; id: string }
-  | { type: "calendar"; value: CalendarEvent[] };
+  | { type: "calendar"; value: CalendarEvent[] }
+  | { type: "ask" };
 
 function withTab(state: State, tab: Tab): State {
   return { ...state, tab, unseen: tab === "notifications" ? 0 : state.unseen };
@@ -51,9 +54,10 @@ function withTab(state: State, tab: Tab): State {
 function reducer(state: State, action: Action): State {
   switch (action.type) {
     case "open":
-      if (!action.value) return { ...state, open: false };
+      if (!action.value) return { ...state, open: false, asked: 0 };
       // Opening while cards are queued means "show me": jump to the list and drop the queue.
-      if (state.queue.length) return { ...withTab(state, "notifications"), open: true, queue: [] };
+      // Not when the ChatGPT shortcut is what opened it.
+      if (state.queue.length && !state.asked) return { ...withTab(state, "notifications"), open: true, queue: [] };
       return { ...withTab(state, state.tab), open: true };
     case "peek":
       return { ...state, peek: action.value };
@@ -92,6 +96,8 @@ function reducer(state: State, action: Action): State {
       return { ...state, permissions: state.permissions.filter((p) => p.id !== action.id) };
     case "calendar":
       return { ...state, calendar: action.value };
+    case "ask":
+      return { ...withTab(state, "chatgpt"), open: true, queue: [], asked: Date.now() };
   }
 }
 
@@ -117,6 +123,7 @@ const initial = (): State => ({
   permissions: [],
   decisions: [],
   calendar: [],
+  asked: 0,
 });
 
 /**
@@ -149,6 +156,7 @@ export function usePillState(notificationMs: number) {
   useEffect(() => {
     const subs = [
       on("pill:hover", setOpen),
+      on("pill:ask", () => dispatch({ type: "ask" })),
       on("pill:peek", (value) => dispatch({ type: "peek", value })),
       on("pill:fullscreen", (value) => dispatch({ type: "fullscreen", value })),
       on("pill:media", (value) => dispatch({ type: "media", value })),

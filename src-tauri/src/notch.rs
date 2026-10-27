@@ -87,7 +87,8 @@ pub struct HitState {
 }
 
 /// The notch normally never takes keyboard focus. While the user types a question it has to,
-/// so this lifts that for as long as the text box is focused, and puts it back afterwards.
+/// so this lifts that for as long as the text box is focused, and puts it back afterwards. The
+/// ChatGPT shortcut calls it too, to open the notch ready to type (see `shortcut.rs`).
 #[tauri::command]
 pub fn notch_typing(active: bool, app: AppHandle, state: State<HitState>) {
     state.typing.store(active, Ordering::Relaxed);
