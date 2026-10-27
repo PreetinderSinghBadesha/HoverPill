@@ -53,7 +53,7 @@ npm run tauri dev
 
 - **When it's closed, clicks go straight through it** to whatever is underneath, so browser tabs and title bars stay usable.
   - **On Linux** this is different: to let a real mouse hover the notch under XWayland, the closed notch keeps the pointer over its own box, so hovering it opens it and a click on it lands on the notch instead of the window below. Everywhere else on the window still passes clicks through. On Windows a closed notch always passes clicks through.
-- **To open it,** push the pointer against the top edge of the screen above the notch.
+- **To open it,** push the pointer against the top edge of the screen above the notch, or press **Win + Alt + Space** from any app (Esc closes it and gives the keyboard back; pick other keys, or none, in Settings › Display).
 - **Staying out of the way:**
   - Pointing at the closed notch fades it out so you can see what's underneath.
   - With nothing happening, it shrinks to a thin bar.

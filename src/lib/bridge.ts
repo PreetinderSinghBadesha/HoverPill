@@ -33,6 +33,8 @@ export type PillEvents = {
   "pill:fullscreen": boolean;
   /** Typing in the notch ended because another app came to the front (Windows). */
   "pill:typing": boolean;
+  /** The shortcut to open the notch was pressed: open where it was, with the keyboard. */
+  "pill:summon": null;
   /** The ChatGPT shortcut was pressed: show the ChatGPT tab, ready to type. */
   "pill:ask": null;
   /** Ctrl is held over the closed notch: it will take a click, to be dragged. */

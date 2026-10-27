@@ -522,7 +522,10 @@ function ChatPanel({ chat, onSettings, asked }: { chat: Chat; onSettings: () => 
       e.preventDefault();
       send();
     }
-    if (e.key === "Escape") input.current?.blur();
+    if (e.key === "Escape") {
+      input.current?.blur();
+      notchTyping(false);
+    }
   };
 
   return (

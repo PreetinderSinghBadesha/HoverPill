@@ -131,6 +131,8 @@ export type Settings = {
     reserveSpace: boolean;
     /** Show the pill on every virtual desktop / workspace, not just the one it was opened on. */
     allWorkspaces: boolean;
+    /** Keys that open the notch from any app, like "Super+Alt+Space"; empty for none. */
+    shortcut: string;
   };
   notifications: {
     enabled: boolean;
@@ -172,6 +174,7 @@ export const DEFAULT_SETTINGS: Settings = {
     gnomeHelper: false,
     reserveSpace: false,
     allWorkspaces: IS_LINUX,
+    shortcut: "Super+Alt+Space",
   },
   notifications: { enabled: true, durationSecs: 4.5, blockedApps: [] },
   media: { enabled: true, ignoredPlayers: [] },

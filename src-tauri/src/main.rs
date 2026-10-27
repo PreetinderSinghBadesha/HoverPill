@@ -139,7 +139,8 @@ fn main() {
                 hoverpill_notify::Event::Unavailable(reason) => events::notify(&handle, "Notifications unavailable", &reason),
             });
 
-            shortcut::apply(app.handle(), &app.state::<SettingsStore>().get().chatgpt.shortcut);
+            let settings = app.state::<SettingsStore>().get();
+            shortcut::apply(app.handle(), &settings.display.shortcut, &settings.chatgpt.shortcut);
             accounts::google::spawn(app.handle().clone());
             autostart::refresh(app.handle());
             tray::init(app)?;

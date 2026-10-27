@@ -213,6 +213,15 @@ function ClaudeSection() {
   );
 }
 
+/** Keys for the shortcut that opens the notch. Each must parse in Rust (see the test in shortcut.rs). */
+const NO_SHORTCUT = "__none__";
+const OPEN_SHORTCUTS = [
+  { value: "Super+Alt+Space", label: IS_LINUX ? "Super + Alt + Space" : "Win + Alt + Space" },
+  { value: "Ctrl+Alt+N", label: "Ctrl + Alt + N" },
+  { value: "Ctrl+Alt+H", label: "Ctrl + Alt + H" },
+  { value: NO_SHORTCUT, label: "Off" },
+];
+
 function DisplayTab({ settings, update }: { settings: Settings; update: Update }) {
   const [monitors, setMonitors] = useState<MonitorInfo[]>([]);
   useEffect(() => {
@@ -255,6 +264,13 @@ function DisplayTab({ settings, update }: { settings: Settings; update: Update }
           description="Push the pointer against the top edge above the notch to open it. With this off, pointing at the closed notch fades it out so you can see what's underneath. Clicks on the closed notch always go through to it."
           checked={d.openOnHover}
           onChange={(openOnHover) => setDisplay({ openOnHover })}
+        />
+        <SelectRow
+          title="Shortcut to open"
+          description="Opens the notch from any app, with the keyboard; Esc closes it again. Ctrl + Alt + G opens its ChatGPT tab (change that under Accounts)."
+          value={d.shortcut || NO_SHORTCUT}
+          options={OPEN_SHORTCUTS}
+          onChange={(v) => setDisplay({ shortcut: v === NO_SHORTCUT ? "" : v })}
         />
       </Section>
       <Section title="Staying out of the way">

@@ -44,6 +44,8 @@ pub struct Display {
     /// Show the pill on every virtual desktop / workspace, not just the one it was opened on.
     /// Linux only (a sticky window), on by default there; ignored on Windows.
     pub all_workspaces: bool,
+    /// Keys that open the notch from any app, like "Super+Alt+Space"; empty for none.
+    pub shortcut: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -108,6 +110,7 @@ impl Default for Display {
             gnome_helper: false,
             reserve_space: false,
             all_workspaces: cfg!(target_os = "linux"),
+            shortcut: "Super+Alt+Space".into(),
         }
     }
 }
@@ -155,6 +158,7 @@ impl Settings {
         self.display.top_offset = clamp(TOP_OFFSET_RANGE, self.display.top_offset, d.top_offset).round();
         self.display.scale = (clamp(SCALE_RANGE, self.display.scale, d.scale) * 100.0).round() / 100.0;
         self.display.monitor = self.display.monitor.filter(|m| !m.trim().is_empty());
+        self.display.shortcut = self.display.shortcut.trim().to_string();
         let n = Notifications::default();
         self.notifications.duration_secs = clamp(DURATION_RANGE, self.notifications.duration_secs, n.duration_secs);
         self.notifications.blocked_apps = tidy(self.notifications.blocked_apps);
@@ -228,7 +232,7 @@ pub fn apply(app: &AppHandle, settings: &Settings) {
         }
         crate::notch::set_all_workspaces(&pill, settings.display.all_workspaces);
     }
-    crate::shortcut::apply(app, &settings.chatgpt.shortcut);
+    crate::shortcut::apply(app, &settings.display.shortcut, &settings.chatgpt.shortcut);
     let _ = app.emit("settings:changed", settings);
 }
 
@@ -390,6 +394,7 @@ mod tests {
         assert_eq!(s.display.all_workspaces, cfg!(target_os = "linux"));
         assert!(s.notifications.enabled);
         assert_eq!(s.chatgpt.shortcut, "Ctrl+Alt+G");
+        assert_eq!(s.display.shortcut, "Super+Alt+Space");
     }
 
     #[test]

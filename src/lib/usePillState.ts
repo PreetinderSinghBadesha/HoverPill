@@ -28,7 +28,7 @@ type State = {
   decisions: PastDecision[];
   /** Upcoming Google Calendar events, soonest first. */
   calendar: CalendarEvent[];
-  /** When the ChatGPT shortcut opened it (ms), until it closes again; 0 otherwise. */
+  /** When a shortcut opened it (ms), until it closes again; 0 otherwise. */
   asked: number;
   /** Locked open with the lock button. */
   pinned: boolean;
@@ -48,6 +48,7 @@ type Action =
   | { type: "cancelPermission"; id: string }
   | { type: "calendar"; value: CalendarEvent[] }
   | { type: "ask" }
+  | { type: "summon" }
   | { type: "pin"; value: boolean };
 
 function withTab(state: State, tab: Tab): State {
@@ -101,6 +102,10 @@ function reducer(state: State, action: Action): State {
       return { ...state, calendar: action.value };
     case "ask":
       return { ...withTab(state, "chatgpt"), open: true, queue: [], asked: Date.now() };
+    case "summon": {
+      const opened = reducer(state, { type: "open", value: true });
+      return { ...opened, asked: Date.now() };
+    }
     case "pin":
       return { ...state, pinned: action.value };
   }
@@ -163,6 +168,7 @@ export function usePillState(notificationMs: number) {
     const subs = [
       on("pill:hover", setOpen),
       on("pill:ask", () => dispatch({ type: "ask" })),
+      on("pill:summon", () => dispatch({ type: "summon" })),
       on("pill:peek", (value) => dispatch({ type: "peek", value })),
       on("pill:fullscreen", (value) => dispatch({ type: "fullscreen", value })),
       on("pill:media", (value) => dispatch({ type: "media", value })),
