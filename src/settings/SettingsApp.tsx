@@ -560,8 +560,9 @@ function StatusTab({ settings, update }: { settings: Settings; update: Update })
       </Section>
       {IS_LINUX && (
         <Note>
-          Camera and microphone use isn't read on Linux yet, so the dots stay off for now. Volume, brightness and battery
-          work from PipeWire (or PulseAudio), the backlight and the battery.
+          On Linux the microphone dot follows recording streams in PipeWire (or PulseAudio), and the camera dot follows
+          apps that have the camera open. Volume, brightness and battery come from the sound server, the backlight and
+          the battery.
         </Note>
       )}
     </>

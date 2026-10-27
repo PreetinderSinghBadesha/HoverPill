@@ -48,7 +48,8 @@ winreg = "0.56"
 # plus libX11 (through x11-dl) to spot a fullscreen app worth hiding behind (see
 # `fullscreen_app_on`).
 [target.'cfg(target_os = "linux")'.dependencies]
-# Signal handling, to exit normally on SIGTERM/SIGINT (see `exit_on_signal` in main.rs).
+# Signal handling, to exit normally on SIGTERM/SIGINT (see `exit_on_signal` in main.rs), and
+# inotify on the camera nodes, to see a camera being opened or closed (see access.rs).
 libc = "0.2"
 gtk = "0.18"
 gdkx11 = "0.18"
