@@ -86,6 +86,7 @@ pub struct HitState {
     typing: AtomicBool,
     /// Linux: the X window that had the keyboard before `grab_keyboard` took it, so it can be
     /// handed back when typing ends.
+    #[cfg(target_os = "linux")]
     previous_focus: Mutex<Option<u64>>,
     /// Locked open with the lock button: it stays open, wherever the pointer goes, until unlocked.
     pinned: AtomicBool,
@@ -1057,7 +1058,9 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
         // Just dropped under the pointer: don't open until the pointer has moved off it.
         let mut wait_for_leave = false;
         let mut was_dragging = false;
-        // When the current drag started, so a stale button reading can't end it immediately.
+        // Linux: when the current drag started, so a stale button reading can't end it
+        // immediately (XWayland can lose the pointerup while the window moves under it).
+        #[cfg(target_os = "linux")]
         let mut drag_since: Option<Instant> = None;
         // Linux: the whole window has been made input-opaque for the duration of a drag.
         #[cfg(target_os = "linux")]
@@ -1078,6 +1081,7 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
             // Dragging: the window follows the pointer and nothing else happens meanwhile.
             let drag = *win.state::<DragState>().0.lock().unwrap();
             if let Some(drag) = drag {
+                #[cfg(target_os = "linux")]
                 let started = *drag_since.get_or_insert_with(Instant::now);
                 std::thread::sleep(DRAG_POLL);
                 if open {
@@ -1112,7 +1116,10 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
                 was_dragging = true;
                 continue;
             }
-            drag_since = None;
+            #[cfg(target_os = "linux")]
+            {
+                drag_since = None;
+            }
             // Dropped (here or by the webview's `end_drag`): it has moved, and it's under the pointer.
             if was_dragging {
                 was_dragging = false;

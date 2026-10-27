@@ -31,7 +31,8 @@ impl Action {
         }
     }
 
-    /// The value of `--summon=...` for this action.
+    /// The value of `--summon=...` for this action, which only the GNOME keybindings pass.
+    #[cfg(target_os = "linux")]
     fn arg(self) -> &'static str {
         match self {
             Action::Open => "open",
