@@ -62,7 +62,46 @@ export type MediaState = {
 export type MediaAction = "play_pause" | "next" | "previous";
 
 /** `timer`: closed, nothing playing, timer or stopwatch running. `alarm`: the timer just ended. */
-export type View = "idle" | "media" | "timer" | "expanded" | "notification" | "permission" | "alarm" | "update";
+export type View = "idle" | "media" | "timer" | "expanded" | "notification" | "permission" | "alarm" | "update" | "system";
+
+/** An app using the camera or microphone (src-tauri/src/access.rs). */
+export type AccessEntry = {
+  /** App name to show, e.g. "Google Chrome". */
+  app: string;
+  /** The package family name or executable path Windows knows it by. */
+  id: string;
+  /** When it started, Unix ms. */
+  startedAt: number;
+};
+
+export type AccessState = {
+  /** Every app using it right now, oldest first. */
+  entries: AccessEntry[];
+  /** Any app at all: what the dot follows. */
+  active: boolean;
+};
+
+/** Camera and microphone use, pushed as `pill:privacy` when either changes. */
+export type PrivacyState = { camera: AccessState; microphone: AccessState };
+
+export type VolumeState = { level: number; muted: boolean };
+export type BrightnessState = { level: number; supported: boolean };
+export type BatteryState = { level: number; charging: boolean; supported: boolean };
+
+/** Volume, brightness and battery, pushed as `pill:system` when one changes. */
+export type SystemState = { volume: VolumeState; brightness: BrightnessState; battery: BatteryState };
+
+export type SystemCardKind = "volume" | "brightness" | "charging" | "low-battery";
+
+/** A short card for a volume/brightness change, the charger going in, or a low battery. */
+export type SystemCard = {
+  kind: SystemCardKind;
+  /** 0–100: the new volume/brightness, or the battery level. */
+  level: number;
+  muted: boolean;
+  /** When it appeared, Unix ms; also identifies the card when it's dismissed. */
+  at: number;
+};
 
 /**
  * A newer HoverPill: downloaded and ready to install with a restart (`restart`), or, where this
@@ -164,6 +203,20 @@ export type Settings = {
     /** Look for a new version now and then, and get it ready to install. */
     autoCheck: boolean;
   };
+  privacy: {
+    /** A green dot while any app uses the camera. */
+    cameraIndicator: boolean;
+    /** An orange dot while any app uses the microphone. */
+    microphoneIndicator: boolean;
+  };
+  system: {
+    /** A level bar (and mute state) when the volume changes. */
+    showVolume: boolean;
+    /** A level bar when the screen brightness changes (laptops). */
+    showBrightness: boolean;
+    /** A card when the charger goes in, and a warning when the battery runs low. */
+    showBattery: boolean;
+  };
   chatgpt: {
     /** Model slug; null uses the first one the account offers. */
     model: string | null;
@@ -193,6 +246,8 @@ export const DEFAULT_SETTINGS: Settings = {
   calendar: { enabled: true, reminderMinutes: 5, clientId: "", clientSecret: "" },
   chatgpt: { model: null, shortcut: "Ctrl+Alt+G" },
   updates: { autoCheck: true },
+  privacy: { cameraIndicator: true, microphoneIndicator: true },
+  system: { showVolume: true, showBrightness: true, showBattery: true },
 };
 
 export const RANGES = {

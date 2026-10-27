@@ -20,8 +20,20 @@ import { formatCountdown, formatElapsed, stopwatchElapsed, timerLeft, useTimers 
 import { useLiveSettings } from "../lib/useSettings";
 import { useArtworkColor } from "../lib/useArtworkColor";
 import { useAccounts, useChat } from "../lib/useAccounts";
-import { IS_LINUX, type Layout, type View } from "../lib/types";
-import { AlarmView, BubbleView, ExpandedView, IdleView, MediaCompactView, NotificationView, PermissionView, TimerCompactView, UpdateView, releaseTypingAfterBlur } from "./views";
+import { IS_LINUX, type Layout, type PrivacyState, type SystemCardKind, type View } from "../lib/types";
+import {
+  AlarmView,
+  BubbleView,
+  ExpandedView,
+  IdleView,
+  MediaCompactView,
+  NotificationView,
+  PermissionView,
+  SystemCardView,
+  TimerCompactView,
+  UpdateView,
+  releaseTypingAfterBlur,
+} from "./views";
 
 /**
  * Target size per view, in CSS px. The window is fixed (see notch.rs); only the notch morphs.
@@ -37,6 +49,7 @@ const SIZES: Record<View, Size> = {
   update: { width: 440, height: 78, radius: 24 },
   notification: { width: 420, height: 78, radius: 24 },
   permission: { width: 520, height: 260, radius: 26 },
+  system: { width: 320, height: 78, radius: 24 },
   expanded: { width: 680, height: 300, radius: 30 },
 };
 
@@ -49,6 +62,7 @@ const SIDE_SIZES: Partial<Record<View, Size>> = {
   update: { width: 260, height: 124, radius: 22 },
   notification: { width: 260, height: 132, radius: 22 },
   permission: { width: 280, height: 340, radius: 24 },
+  system: { width: 260, height: 120, radius: 22 },
   expanded: { width: 380, height: 500, radius: 30 },
 };
 
@@ -93,7 +107,16 @@ export function Pill() {
       : stopwatch.startedAt !== null
         ? formatElapsed(stopwatchElapsed(stopwatch, now))
         : null;
-  const view = pickView(state, { ringing, ticking: clock !== null });
+  const enabled = (kind: SystemCardKind) =>
+    kind === "volume" ? settings.system.showVolume : kind === "brightness" ? settings.system.showBrightness : settings.system.showBattery;
+  // Rust always sends both; the settings decide what the notch shows.
+  const systemCard = state.systemCard && enabled(state.systemCard.kind) ? state.systemCard : null;
+  const privacy: PrivacyState = {
+    camera: settings.privacy.cameraIndicator ? state.privacy.camera : { entries: [], active: false },
+    microphone: settings.privacy.microphoneIndicator ? state.privacy.microphone : { entries: [], active: false },
+  };
+  const dots = privacy.camera.active || privacy.microphone.active;
+  const view = pickView(state, { ringing, ticking: clock !== null }, systemCard);
   const accent = useArtworkColor(state.media?.artwork);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -145,7 +168,8 @@ export function Pill() {
   const side = edge === "left" || edge === "right";
   // Closed against the left or right edge: the notch turned on its side.
   const upright = side && CLOSED.includes(view);
-  const flat = view === "idle" && settings.display.compactIdle ? IDLE_BAR : (side && SIDE_SIZES[view]) || SIZES[view];
+  const flat =
+    view === "idle" && settings.display.compactIdle && !dots ? IDLE_BAR : (side && SIDE_SIZES[view]) || SIZES[view];
   const size = drag ? BUBBLE_SIZE : upright ? { ...flat, width: flat.height, height: flat.width } : flat;
   // Behind a fullscreen app only what's waiting on you (a Claude request, a finished timer) shows,
   // or ChatGPT when its shortcut was pressed.
@@ -277,6 +301,7 @@ export function Pill() {
             "notch",
             ears ? "is-attached" : "is-floating",
             accent ? "has-accent" : "",
+            dots ? "has-privacy" : "",
             side ? "is-narrow" : "",
             drag ? "is-dragging" : grab ? "is-grab" : "",
           ]
@@ -314,7 +339,17 @@ export function Pill() {
           <div className="notch-clip">
             <AnimatePresence initial={false}>
               <motion.div
-                key={drag ? "bubble" : view === "permission" ? `p-${permission?.id}` : view === "notification" ? `n-${notification?.id}` : `${view}-${upright ? edge : "flat"}`}
+                key={
+                  drag
+                    ? "bubble"
+                    : view === "permission"
+                      ? `p-${permission?.id}`
+                      : view === "notification"
+                        ? `n-${notification?.id}`
+                        : view === "system"
+                          ? `s-${systemCard?.at}`
+                          : `${view}-${upright ? edge : "flat"}`
+                }
                 className={`content${upright ? ` is-sideways on-${edge}` : ""}`}
                 // Upright, the content keeps its usual shape and is turned to fit.
                 style={{ width: upright ? flat.width : size.width, height: upright ? flat.height : size.height }}
@@ -323,10 +358,11 @@ export function Pill() {
                 exit={{ opacity: 0, filter: "blur(4px)", transition: { duration: 0.1 } }}
               >
                 {drag && <BubbleView media={state.media} clock={clock} />}
-                {!drag && view === "idle" && <IdleView />}
-                {!drag && view === "media" && state.media && <MediaCompactView media={state.media} clock={clock} />}
-                {!drag && view === "timer" && clock && <TimerCompactView clock={clock} />}
+                {!drag && view === "idle" && <IdleView privacy={privacy} />}
+                {!drag && view === "media" && state.media && <MediaCompactView media={state.media} clock={clock} privacy={privacy} />}
+                {!drag && view === "timer" && clock && <TimerCompactView clock={clock} privacy={privacy} />}
                 {!drag && view === "alarm" && <AlarmView durationMs={timer.durationMs} onSnooze={timers.timerActions.snooze} onDone={timers.timerActions.reset} />}
+                {!drag && view === "system" && systemCard && <SystemCardView card={systemCard} />}
                 {!drag && view === "notification" && notification && <NotificationView item={notification} durationMs={durationMs} />}
                 {!drag && view === "update" && state.update && (
                   <UpdateView
@@ -376,6 +412,8 @@ export function Pill() {
                       pinNotch(value);
                       dispatch({ type: "pin", value });
                     }}
+                    privacy={privacy}
+                    systemCard={systemCard}
                   />
                 )}
               </motion.div>

@@ -16,7 +16,9 @@ import {
   type NotificationItem,
   type PermissionRequest,
   type PlayerInfo,
+  type PrivacyState,
   type Screenshot,
+  type SystemState,
   type UpdateOffer,
   type Rect,
   type Settings,
@@ -51,6 +53,10 @@ export type PillEvents = {
   "pill:permission-cancel": { id: string };
   "pill:notification": NotificationItem;
   "pill:media": MediaState | null;
+  /** Apps using the camera or microphone (Windows; nothing on Linux yet). */
+  "pill:privacy": PrivacyState;
+  /** Volume, brightness or battery changed. */
+  "pill:system": SystemState;
   /** Sent to every window after a save, with the values Rust actually stored. */
   "settings:changed": Settings;
   /** Upcoming Google Calendar events (empty when disconnected or turned off). */
@@ -122,6 +128,14 @@ export async function installUpdate(): Promise<void> {
 /** Checks for a newer version now: what to do about it, or null if this is the latest. */
 export async function checkForUpdates(): Promise<UpdateOffer | null> {
   return inTauri ? invoke<UpdateOffer | null>("check_for_updates") : null;
+}
+
+/**
+ * The update the last check found, if it hasn't been installed. Settings asks on open, so an
+ * update put off with "Later" in the notch is still offered there.
+ */
+export async function pendingUpdate(): Promise<UpdateOffer | null> {
+  return inTauri ? invoke<UpdateOffer | null>("pending_update") : null;
 }
 
 export function openSettings() {
