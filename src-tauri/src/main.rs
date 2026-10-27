@@ -14,6 +14,7 @@ mod settings;
 mod shellext;
 mod shortcut;
 mod tray;
+mod updater;
 
 use tauri::Manager;
 
@@ -40,10 +41,12 @@ fn main() {
         .plugin(autostart::plugin())
         .plugin(shortcut::plugin())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(notch::HitState::default())
         .manage(notch::HoverState::default())
         .manage(notch::DragState::default())
         .manage(screen::Screens::default())
+        .manage(updater::Pending::default())
         .manage(events::Outbox::default())
         .invoke_handler(tauri::generate_handler![
             notch::set_hit_rect,
@@ -56,6 +59,8 @@ fn main() {
             screen::capture_screen,
             tray::claude_hook_installed,
             tray::set_claude_hook,
+            updater::check_for_updates,
+            updater::install_update,
             settings::get_settings,
             settings::open_settings,
             settings::set_settings,
@@ -142,6 +147,7 @@ fn main() {
             let settings = app.state::<SettingsStore>().get();
             shortcut::apply(app.handle(), &settings.display.shortcut, &settings.chatgpt.shortcut);
             accounts::google::spawn(app.handle().clone());
+            updater::spawn(app.handle().clone());
             autostart::refresh(app.handle());
             tray::init(app)?;
             Ok(())

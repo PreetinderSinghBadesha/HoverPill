@@ -16,6 +16,20 @@ pub struct Settings {
     pub media: Media,
     pub calendar: Calendar,
     pub chatgpt: ChatGpt,
+    pub updates: Updates,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Updates {
+    /// Look for a new version now and then, and get it ready to install (see `updater.rs`).
+    pub auto_check: bool,
+}
+
+impl Default for Updates {
+    fn default() -> Self {
+        Self { auto_check: true }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -395,6 +409,7 @@ mod tests {
         assert!(s.notifications.enabled);
         assert_eq!(s.chatgpt.shortcut, "Ctrl+Alt+G");
         assert_eq!(s.display.shortcut, "Super+Alt+Space");
+        assert!(s.updates.auto_check);
     }
 
     #[test]

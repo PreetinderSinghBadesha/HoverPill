@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef } from "react";
 import { calendarEvents, currentMedia, inTauri, on, pillReady } from "./bridge";
-import type { CalendarEvent, Decision, MediaState, NotificationItem, PastDecision, PermissionRequest, ReceivedNotification, Tab, View } from "./types";
+import type { CalendarEvent, Decision, MediaState, NotificationItem, PastDecision, PermissionRequest, ReceivedNotification, Tab, UpdateOffer, View } from "./types";
 
 const HOVER_LEAVE_MS = 180;
 /** A burst (a busy group chat) shouldn't take minutes to play through: keep the newest few cards. */
@@ -32,6 +32,8 @@ type State = {
   asked: number;
   /** Locked open with the lock button. */
   pinned: boolean;
+  /** A newer version, offered in a card until it's installed or put off. */
+  update: UpdateOffer | null;
 };
 
 type Action =
@@ -49,7 +51,8 @@ type Action =
   | { type: "calendar"; value: CalendarEvent[] }
   | { type: "ask" }
   | { type: "summon" }
-  | { type: "pin"; value: boolean };
+  | { type: "pin"; value: boolean }
+  | { type: "update"; value: UpdateOffer | null };
 
 function withTab(state: State, tab: Tab): State {
   return { ...state, tab, unseen: tab === "notifications" ? 0 : state.unseen };
@@ -108,6 +111,8 @@ function reducer(state: State, action: Action): State {
     }
     case "pin":
       return { ...state, pinned: action.value };
+    case "update":
+      return { ...state, update: action.value };
   }
 }
 
@@ -135,6 +140,7 @@ const initial = (): State => ({
   calendar: [],
   asked: 0,
   pinned: false,
+  update: null,
 });
 
 /**
@@ -145,6 +151,7 @@ export function pickView(s: State, timers: { ringing: boolean; ticking: boolean 
   if (s.permissions.length) return "permission";
   if (timers.ringing) return "alarm";
   if (s.open) return "expanded";
+  if (s.update) return "update";
   if (s.queue.length) return "notification";
   if (s.media) return "media";
   if (timers.ticking) return "timer";
@@ -169,6 +176,7 @@ export function usePillState(notificationMs: number) {
       on("pill:hover", setOpen),
       on("pill:ask", () => dispatch({ type: "ask" })),
       on("pill:summon", () => dispatch({ type: "summon" })),
+      on("pill:update", (value) => dispatch({ type: "update", value })),
       on("pill:peek", (value) => dispatch({ type: "peek", value })),
       on("pill:fullscreen", (value) => dispatch({ type: "fullscreen", value })),
       on("pill:media", (value) => dispatch({ type: "media", value })),

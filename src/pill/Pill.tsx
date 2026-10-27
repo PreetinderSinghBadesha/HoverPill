@@ -1,13 +1,27 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent } from "react";
 import { AnimatePresence, motion, useMotionValue, type Transition } from "motion/react";
-import { beginDrag, dockLayout, endDrag, inTauri, mediaCommand, notchTyping, on, openSettings, pinNotch, resolvePermission, setHitRect } from "../lib/bridge";
+import {
+  beginDrag,
+  dockLayout,
+  endDrag,
+  inTauri,
+  installUpdate,
+  mediaCommand,
+  notchTyping,
+  on,
+  openLink,
+  openSettings,
+  pinNotch,
+  resolvePermission,
+  setHitRect,
+} from "../lib/bridge";
 import { pickView, usePillState } from "../lib/usePillState";
 import { formatCountdown, formatElapsed, stopwatchElapsed, timerLeft, useTimers } from "../lib/useTimers";
 import { useLiveSettings } from "../lib/useSettings";
 import { useArtworkColor } from "../lib/useArtworkColor";
 import { useAccounts, useChat } from "../lib/useAccounts";
 import { IS_LINUX, type Layout, type View } from "../lib/types";
-import { AlarmView, BubbleView, ExpandedView, IdleView, MediaCompactView, NotificationView, PermissionView, TimerCompactView } from "./views";
+import { AlarmView, BubbleView, ExpandedView, IdleView, MediaCompactView, NotificationView, PermissionView, TimerCompactView, UpdateView } from "./views";
 
 /**
  * Target size per view, in CSS px. The window is fixed (see notch.rs); only the notch morphs.
@@ -20,6 +34,7 @@ const SIZES: Record<View, Size> = {
   media: { width: 300, height: 32, radius: 14 },
   timer: { width: 210, height: 32, radius: 14 },
   alarm: { width: 440, height: 78, radius: 24 },
+  update: { width: 440, height: 78, radius: 24 },
   notification: { width: 420, height: 78, radius: 24 },
   permission: { width: 520, height: 260, radius: 26 },
   expanded: { width: 680, height: 300, radius: 30 },
@@ -31,6 +46,7 @@ const SIZES: Record<View, Size> = {
  */
 const SIDE_SIZES: Partial<Record<View, Size>> = {
   alarm: { width: 260, height: 124, radius: 22 },
+  update: { width: 260, height: 124, radius: 22 },
   notification: { width: 260, height: 132, radius: 22 },
   permission: { width: 280, height: 340, radius: 24 },
   expanded: { width: 380, height: 500, radius: 30 },
@@ -135,7 +151,7 @@ export function Pill() {
   // or ChatGPT when its shortcut was pressed.
   const hidden = state.fullscreen && view !== "permission" && view !== "alarm" && !state.asked && !state.pinned;
   // Closed (and a passing notification) never takes clicks, so browser tabs underneath stay usable.
-  const interactive = !hidden && !drag && (view === "expanded" || view === "permission" || view === "alarm");
+  const interactive = !hidden && !drag && (view === "expanded" || view === "permission" || view === "alarm" || view === "update");
   // Pointing at the closed notch fades it, unless resting is how you open it.
   const faded = state.peek && !interactive && !settings.display.openOnHover && !free;
 
@@ -312,6 +328,18 @@ export function Pill() {
                 {!drag && view === "timer" && clock && <TimerCompactView clock={clock} />}
                 {!drag && view === "alarm" && <AlarmView durationMs={timer.durationMs} onSnooze={timers.timerActions.snooze} onDone={timers.timerActions.reset} />}
                 {!drag && view === "notification" && notification && <NotificationView item={notification} durationMs={durationMs} />}
+                {!drag && view === "update" && state.update && (
+                  <UpdateView
+                    offer={state.update}
+                    onLater={() => dispatch({ type: "update", value: null })}
+                    onInstall={() => {
+                      const offer = state.update!;
+                      dispatch({ type: "update", value: null });
+                      if (offer.mode === "download") openLink("https://github.com/PreetinderSinghBadesha/HoverPill/releases/latest");
+                      else installUpdate().catch(console.error);
+                    }}
+                  />
+                )}
                 {!drag && view === "permission" && permission && (
                   <PermissionView
                     request={permission}

@@ -17,6 +17,7 @@ import {
   type PermissionRequest,
   type PlayerInfo,
   type Screenshot,
+  type UpdateOffer,
   type Rect,
   type Settings,
 } from "./types";
@@ -33,6 +34,8 @@ export type PillEvents = {
   "pill:fullscreen": boolean;
   /** Typing in the notch ended because another app came to the front (Windows). */
   "pill:typing": boolean;
+  /** A newer HoverPill is ready (or, for a .deb/.rpm install, out). */
+  "pill:update": UpdateOffer;
   /** The shortcut to open the notch was pressed: open where it was, with the keyboard. */
   "pill:summon": null;
   /** The ChatGPT shortcut was pressed: show the ChatGPT tab, ready to type. */
@@ -107,6 +110,16 @@ export function beginDrag() {
 /** The button came up: Rust docks it where it was dropped and answers with `pill:dock`. */
 export async function endDrag(): Promise<void> {
   if (inTauri) await invoke("end_drag");
+}
+
+/** Installs the downloaded update and restarts into it. Rejects with a readable message. */
+export async function installUpdate(): Promise<void> {
+  if (inTauri) await invoke("install_update");
+}
+
+/** Checks for a newer version now; resolves to it, or null if this is the latest. */
+export async function checkForUpdates(): Promise<string | null> {
+  return inTauri ? invoke<string | null>("check_for_updates") : null;
 }
 
 export function openSettings() {

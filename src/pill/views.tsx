@@ -14,6 +14,7 @@ import type {
   ReceivedNotification,
   Screenshot,
   Tab,
+  UpdateOffer,
 } from "../lib/types";
 import { IS_LINUX } from "../lib/types";
 import { Icon, type IconName } from "./icons";
@@ -83,6 +84,30 @@ export function AlarmView({ durationMs, onSnooze, onDone }: { durationMs: number
       </button>
       <button type="button" className="btn btn-solid alarm-button" onClick={onDone}>
         Done
+      </button>
+    </div>
+  );
+}
+
+/**
+ * A newer HoverPill is ready. Restart installs it; on a .deb/.rpm install, which can't replace
+ * itself, Download opens the release page instead.
+ */
+export function UpdateView({ offer, onInstall, onLater }: { offer: UpdateOffer; onInstall: () => void; onLater: () => void }) {
+  return (
+    <div className="card-alarm">
+      <span className="alarm-icon" aria-hidden>
+        <Icon name="download" />
+      </span>
+      <div className="card-text">
+        <div className="card-title">HoverPill {offer.version} is ready</div>
+        <div className="card-body">{offer.mode === "restart" ? "Restart to update." : "Download the new version."}</div>
+      </div>
+      <button type="button" className="btn btn-quiet alarm-button" onClick={onLater}>
+        Later
+      </button>
+      <button type="button" className="btn btn-solid alarm-button" onClick={onInstall}>
+        {offer.mode === "restart" ? "Restart" : "Download"}
       </button>
     </div>
   );

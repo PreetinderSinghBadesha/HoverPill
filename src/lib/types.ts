@@ -62,7 +62,13 @@ export type MediaState = {
 export type MediaAction = "play_pause" | "next" | "previous";
 
 /** `timer`: closed, nothing playing, timer or stopwatch running. `alarm`: the timer just ended. */
-export type View = "idle" | "media" | "timer" | "expanded" | "notification" | "permission" | "alarm";
+export type View = "idle" | "media" | "timer" | "expanded" | "notification" | "permission" | "alarm" | "update";
+
+/**
+ * A newer HoverPill: downloaded and ready to install with a restart (`restart`), or, where this
+ * copy can't replace itself (a .deb or .rpm install), to download by hand (`download`).
+ */
+export type UpdateOffer = { version: string; mode: "restart" | "download" };
 
 /** Tabs inside the open notch. */
 export type Tab = "home" | "media" | "timer" | "notifications" | "claude" | "chatgpt";
@@ -152,6 +158,10 @@ export type Settings = {
     clientId: string;
     clientSecret: string;
   };
+  updates: {
+    /** Look for a new version now and then, and get it ready to install. */
+    autoCheck: boolean;
+  };
   chatgpt: {
     /** Model slug; null uses the first one the account offers. */
     model: string | null;
@@ -180,6 +190,7 @@ export const DEFAULT_SETTINGS: Settings = {
   media: { enabled: true, ignoredPlayers: [] },
   calendar: { enabled: true, reminderMinutes: 5, clientId: "", clientSecret: "" },
   chatgpt: { model: null, shortcut: "Ctrl+Alt+G" },
+  updates: { autoCheck: true },
 };
 
 export const RANGES = {

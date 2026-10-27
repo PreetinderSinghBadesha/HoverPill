@@ -5,6 +5,10 @@
 #   1. Bump the version in package.json, src-tauri/Cargo.toml and src-tauri/tauri.conf.json.
 #   2. Commit, then: git tag v0.3.0 && git push origin v0.3.0
 #
+# The repository secret TAURI_SIGNING_PRIVATE_KEY signs the installers for the in-app updater
+# (src-tauri/tauri.release.conf.json turns that on; the matching public key is in
+# tauri.conf.json), and the release gets a latest.json the updater reads.
+#
 # Optional repository secrets HOVERPILL_GOOGLE_CLIENT_ID and HOVERPILL_GOOGLE_CLIENT_SECRET build
 # a Google sign-in client into the app, so people can connect Google Calendar without making
 # their own. Without them, Settings asks for one as before.
@@ -52,7 +56,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOVERPILL_GOOGLE_CLIENT_ID: ${{ secrets.HOVERPILL_GOOGLE_CLIENT_ID }}
           HOVERPILL_GOOGLE_CLIENT_SECRET: ${{ secrets.HOVERPILL_GOOGLE_CLIENT_SECRET }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
+          args: --config src-tauri/tauri.release.conf.json
           tagName: ${{ github.ref_name }}
           releaseName: HoverPill __VERSION__
           releaseBody: &release-body |-
@@ -115,6 +122,7 @@ jobs:
         uses: tauri-apps/tauri-action@v1
         env: *release-env
         with:
+          args: --config src-tauri/tauri.release.conf.json
           tagName: ${{ github.ref_name }}
           releaseName: HoverPill __VERSION__
           releaseBody: *release-body

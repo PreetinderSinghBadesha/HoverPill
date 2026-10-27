@@ -20,6 +20,7 @@ pub fn init(app: &App) -> tauri::Result<()> {
         &[
             &MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?,
             &start_at_login,
+            &MenuItem::with_id(app, "update", "Check for updates", true, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, "hook-install", "Install Claude Code hook", true, None::<&str>)?,
             &MenuItem::with_id(app, "hook-remove", "Remove Claude Code hook", true, None::<&str>)?,
@@ -47,6 +48,7 @@ pub fn init(app: &App) -> tauri::Result<()> {
             "hook-remove" => remove_hook(app),
             "demo-permission" => demo_permission(app),
             "demo-notification" => demo_notification(app),
+            "update" => crate::updater::check_by_hand(app),
             "quit" => app.exit(0),
             _ => {}
         });

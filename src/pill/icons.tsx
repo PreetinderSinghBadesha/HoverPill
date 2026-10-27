@@ -29,6 +29,7 @@ const PATHS = {
   screen: "M4 5h16v11H4zM9 20h6M12 16v4",
   close: "M7 7l10 10M17 7 7 17",
   lock: "M8 11V8a4 4 0 0 1 8 0v3M6 11h12v9H6z",
+  download: "M12 4v11m-4.5-4.5L12 15l4.5-4.5M5 19h14",
   unlock: "M8 11V8a4 4 0 0 1 7.7-1.5M6 11h12v9H6z",
   check: "M5 12.5l4.5 4.5L19 7.5",
 } as const;

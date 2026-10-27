@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import {
+  checkForUpdates,
   claudeHookInstalled,
   getAutostart,
   inTauri,
@@ -109,7 +110,7 @@ export function SettingsApp() {
           <div className="empty">Loading…</div>
         ) : (
           <>
-            {tab === "general" && <GeneralTab />}
+            {tab === "general" && <GeneralTab settings={settings} update={update} />}
             {tab === "display" && <DisplayTab settings={settings} update={update} />}
             {tab === "notifications" && <NotificationsTab settings={settings} update={update} />}
             {tab === "media" && <MediaTab settings={settings} update={update} />}
@@ -137,7 +138,7 @@ function usePolled<T>(load: () => Promise<T>, initial: T, ms = 3000): T {
   return value;
 }
 
-function GeneralTab() {
+function GeneralTab({ settings, update }: { settings: Settings; update: Update }) {
   const [autostart, setAutostartState] = useState<boolean | null>(null);
   const [autostartError, setAutostartError] = useState<string | null>(null);
   const [version, setVersion] = useState("");
@@ -169,6 +170,7 @@ function GeneralTab() {
         />
       </Section>
       <ClaudeSection />
+      <UpdatesSection settings={settings} update={update} />
       <Section title="About">
         <div className="about">
           <p>
@@ -178,6 +180,35 @@ function GeneralTab() {
         </div>
       </Section>
     </>
+  );
+}
+
+/** New versions: checked for now and then, and offered in the notch; or checked right now. */
+function UpdatesSection({ settings, update }: { settings: Settings; update: Update }) {
+  const [status, setStatus] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const check = () => {
+    setBusy(true);
+    setStatus("Checking…");
+    checkForUpdates()
+      .then((v) => setStatus(v ? `HoverPill ${v} is ready: restart from the card in the notch.` : "You have the latest version."))
+      .catch((e) => setStatus(`Couldn't check: ${e}`))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <Section title="Updates">
+      <SwitchRow
+        title="Check for updates automatically"
+        description="Now and then HoverPill looks for a new version, downloads it in the background, and offers to restart into it from the notch."
+        checked={settings.updates.autoCheck}
+        onChange={(autoCheck) => update((s) => ({ ...s, updates: { autoCheck } }))}
+      />
+      <Row title="Check now" description={status ?? "Look for a new version right away."}>
+        <button type="button" className="button" disabled={busy} onClick={check}>
+          Check for updates
+        </button>
+      </Row>
+    </Section>
   );
 }
 
