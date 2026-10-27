@@ -48,6 +48,8 @@ export type PillEvents = {
   "pill:grab": boolean;
   /** Became the notch, docked somewhere else, moved, or was dropped after a drag. */
   "pill:dock": DockEvent;
+  /** Linux, mid-drag: the window hit the edge of the work area, so the bubble moves this far (CSS px) inside it to stay under the pointer. */
+  "pill:drag-offset": [number, number];
   "pill:permission": PermissionRequest;
   /** Claude stopped waiting (interrupted or timed out); drop the card. */
   "pill:permission-cancel": { id: string };

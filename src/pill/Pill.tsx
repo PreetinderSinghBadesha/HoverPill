@@ -78,6 +78,10 @@ const CLOSED: View[] = ["idle", "media", "timer"];
 
 /** Keeps the dragged bubble this far inside the window. */
 const INSET = 6;
+/** Linux: how long a press must stay still to pick the notch up (see `onPointerDown`). */
+const HOLD_TO_DRAG_MS = 400;
+/** CSS px a press may wander and still count as held still. */
+const HOLD_SLOP = 6;
 /** Keeps a docked notch (and its ears) this far inside the window along its edge. */
 const EDGE_ROOM = 18;
 
@@ -130,6 +134,8 @@ export function Pill() {
   const [grab, setGrab] = useState(false);
   const windowSize = useWindowSize();
   const dragging = useRef(false);
+  /** Where the bubble started (CSS px in the window), so `pill:drag-offset` can move it from there. */
+  const dragStart = useRef({ x: 0, y: 0 });
   const swallowClick = useRef(false);
   // Its offset when laid out freely (scaler px). Animated with its size by the same spring
   // (`animate` below), so a panel opening from a bubble keeps that side still as it grows.
@@ -158,6 +164,15 @@ export function Pill() {
         }
       }),
       on("pill:grab", setGrab),
+      on("pill:drag-offset", ([dx, dy]) => {
+        if (!dragging.current) return;
+        const reach = (BUBBLE * scaleRef.current) / 2 + INSET;
+        const start = dragStart.current;
+        setDrag({
+          x: clamp(start.x + dx, reach, window.innerWidth - reach),
+          y: clamp(start.y + dy, reach, window.innerHeight - reach),
+        });
+      }),
     ];
     return () => subs.forEach((s) => s.off());
   }, [x, y]);
@@ -236,12 +251,22 @@ export function Pill() {
 
   // ---------- Ctrl+drag ----------
 
-  const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
-    if (!inTauri || e.button !== 0 || !(e.ctrlKey || grab) || dragging.current) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const el = ref.current!;
-    el.setPointerCapture(e.pointerId);
+  /** Linux: a press that may become a pick-up if it's held still (see `onPointerDown`). */
+  const hold = useRef<{ timer: number; x: number; y: number } | null>(null);
+  const cancelHold = () => {
+    if (hold.current) window.clearTimeout(hold.current.timer);
+    hold.current = null;
+  };
+  useEffect(() => cancelHold, []);
+
+  const startDrag = (clientX: number, clientY: number, pointerId: number) => {
+    const el = ref.current;
+    if (!el || dragging.current) return;
+    try {
+      el.setPointerCapture(pointerId);
+    } catch {
+      // The pointer is already up; the drag loop's own button check ends it at once.
+    }
     // Start the bubble from where the notch is drawn, so it shrinks out of it. React lays it out
     // freely before motion next writes the offset, so it never shows in the wrong frame.
     if (!free) {
@@ -251,13 +276,45 @@ export function Pill() {
     }
     // Under the pointer, but wholly inside the window.
     const reach = (BUBBLE * scale) / 2 + INSET;
-    setDrag({ x: clamp(e.clientX, reach, window.innerWidth - reach), y: clamp(e.clientY, reach, window.innerHeight - reach) });
+    dragStart.current = { x: clamp(clientX, reach, window.innerWidth - reach), y: clamp(clientY, reach, window.innerHeight - reach) };
+    setDrag(dragStart.current);
     dragging.current = true;
     swallowClick.current = true;
     beginDrag();
   };
 
+  const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
+    if (!inTauri || e.button !== 0 || dragging.current) return;
+    if (e.ctrlKey || grab) {
+      e.preventDefault();
+      e.stopPropagation();
+      startDrag(e.clientX, e.clientY, e.pointerId);
+      return;
+    }
+    // Linux: under Wayland the pill never has the keyboard, so it doesn't see Ctrl while another
+    // app has focus. Pressing and holding still picks it up instead. A click, or a press that
+    // moves first (selecting text), stays what it was. Fields you type in are left alone.
+    if (!IS_LINUX || (e.target as Element).closest("input, textarea, select, [contenteditable]")) return;
+    cancelHold();
+    const { clientX, clientY, pointerId } = e;
+    hold.current = {
+      x: clientX,
+      y: clientY,
+      timer: window.setTimeout(() => {
+        hold.current = null;
+        window.getSelection()?.removeAllRanges();
+        startDrag(clientX, clientY, pointerId);
+      }, HOLD_TO_DRAG_MS),
+    };
+  };
+
+  const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
+    const h = hold.current;
+    if (h && Math.hypot(e.clientX - h.x, e.clientY - h.y) > HOLD_SLOP) cancelHold();
+  };
+
   const onPointerUp = () => {
+    cancelHold();
     if (!dragging.current) return;
     endDrag()
       .catch(console.error)
@@ -323,7 +380,9 @@ export function Pill() {
           }}
           transition={{ ...SPRING, opacity: { duration: 0.15, ease: "easeOut" } }}
           onPointerDownCapture={onPointerDown}
+          onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
           onLostPointerCapture={onPointerUp}
           onClickCapture={onClickCapture}
           // In Tauri, opening is decided by the Rust cursor poller; these only drive the browser preview.
