@@ -263,7 +263,8 @@ mod platform {
     const TICK: Duration = Duration::from_millis(500);
     const VOLUME_EVERY: Duration = Duration::from_secs(3);
     const BRIGHTNESS_EVERY: Duration = Duration::from_secs(1);
-    const BATTERY_EVERY: Duration = Duration::from_secs(15);
+    /// A few small sysfs reads; quick enough that the charging card follows the plug.
+    const BATTERY_EVERY: Duration = Duration::from_secs(2);
 
     #[derive(Clone, Copy)]
     enum Mixer {
