@@ -5,6 +5,7 @@ mod accounts;
 mod appbar;
 mod autostart;
 mod broker;
+mod dock;
 mod events;
 mod notch;
 mod settings;
@@ -37,6 +38,7 @@ fn main() {
         .plugin(autostart::plugin())
         .manage(notch::HitState::default())
         .manage(notch::HoverState::default())
+        .manage(notch::DragState::default())
         .manage(events::Outbox::default())
         .invoke_handler(tauri::generate_handler![
             notch::set_hit_rect,
@@ -54,6 +56,9 @@ fn main() {
             autostart::get_autostart,
             autostart::set_autostart,
             notch::notch_typing,
+            notch::begin_drag,
+            notch::end_drag,
+            notch::dock_layout,
             accounts::accounts_status,
             accounts::open_link,
             accounts::google::google_connect,
@@ -71,6 +76,7 @@ fn main() {
             // Placement, media and notifications all read settings, so load them first.
             app.manage(SettingsStore::load(app.handle())?);
             app.manage(RecentApps::load(app.handle())?);
+            app.manage(dock::DockStore::load(app.handle())?);
             let vault = accounts::Vault::load(app.handle())?;
             app.manage(accounts::google::Google::load(&vault));
             app.manage(accounts::chatgpt::ChatGpt::load(&vault));
@@ -79,7 +85,7 @@ fn main() {
             let pill = app
                 .get_webview_window(notch::LABEL)
                 .ok_or("pill window missing from tauri.conf.json")?;
-            notch::place_top_center(&pill)?;
+            notch::place(&pill)?;
             // Apply the saved all-desktops choice at startup; `settings::apply` only runs it when
             // the setting changes. On Linux this is a no-op until the GTK window is realized, so
             // the hit-test loop re-applies it (see `STICKY_STATE` in notch.rs).

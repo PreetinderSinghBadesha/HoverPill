@@ -36,6 +36,24 @@ export function MediaCompactView({ media, clock }: { media: MediaState; clock: s
   );
 }
 
+/**
+ * Closed as a bubble against a screen edge: a running timer or stopwatch, else the cover of
+ * what's playing, else a small pill shape.
+ */
+export function BubbleView({ media, clock }: { media: MediaState | null; clock: string | null }) {
+  return (
+    <div className="bubble">
+      {clock ? (
+        <span className={`bubble-clock${clock.length > 5 ? " is-long" : ""}`}>{clock}</span>
+      ) : media ? (
+        <Artwork media={media} className="bubble-art" />
+      ) : (
+        <span className="bubble-mark" />
+      )}
+    </div>
+  );
+}
+
 /** Closed, nothing playing, a timer or stopwatch running. */
 export function TimerCompactView({ clock }: { clock: string }) {
   return (

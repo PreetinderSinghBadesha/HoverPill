@@ -7,6 +7,8 @@ import {
   type ChatChunk,
   type ChatTurn,
   type Decision,
+  type DockEvent,
+  type Layout,
   type ModelInfo,
   type MediaAction,
   type MediaState,
@@ -28,6 +30,10 @@ export type PillEvents = {
   "pill:peek": boolean;
   /** A fullscreen app covers the notch's monitor. */
   "pill:fullscreen": boolean;
+  /** Ctrl is held over the closed notch: it will take a click, to be dragged. */
+  "pill:grab": boolean;
+  /** Became the notch, docked somewhere else, moved, or was dropped after a drag. */
+  "pill:dock": DockEvent;
   "pill:permission": PermissionRequest;
   /** Claude stopped waiting (interrupted or timed out); drop the card. */
   "pill:permission-cancel": { id: string };
@@ -70,6 +76,30 @@ export function pillReady() {
 /** `interactive`: the notch should take clicks while the pointer is over it (open, or a card with buttons). */
 export function setHitRect(rect: Rect, interactive: boolean) {
   if (inTauri) invoke("set_hit_rect", { rect, interactive }).catch(console.error);
+}
+
+/** Where it's laid out right now; changes arrive as `pill:dock`. */
+export async function dockLayout(): Promise<Layout> {
+  return inTauri ? invoke<Layout>("dock_layout") : demoLayout();
+}
+
+/** For `npm run dev`: `?dock=left` (or right, top) shows it docked against that edge. */
+function demoLayout(): Layout {
+  const edge = new URLSearchParams(location.search).get("dock");
+  const [w, h] = [window.innerWidth, window.innerHeight];
+  if (edge === "left" || edge === "right") return { mode: "docked", edge, x: edge === "left" ? 0 : w, y: h / 2 };
+  if (edge === "top") return { mode: "docked", edge, x: w * 0.3, y: 0 };
+  return { mode: "notch" };
+}
+
+/** Ctrl+press on the pill: from here Rust moves the window with the pointer. */
+export function beginDrag() {
+  if (inTauri) invoke("begin_drag").catch(console.error);
+}
+
+/** The button came up: Rust docks it where it was dropped and answers with `pill:dock`. */
+export async function endDrag(): Promise<void> {
+  if (inTauri) await invoke("end_drag");
 }
 
 export function openSettings() {

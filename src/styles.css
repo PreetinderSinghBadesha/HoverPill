@@ -95,11 +95,219 @@ button {
   background: radial-gradient(circle at 100% 100%, transparent calc(var(--ear, 12px) - 0.5px), var(--bezel) var(--ear, 12px));
 }
 
+/* Docked on a side edge the ears sit above (is-left) and below (is-right) where it meets the edge. */
+.notch[data-edge="left"] .ear.is-left,
+.notch[data-edge="right"] .ear.is-left {
+  top: calc(-1 * var(--ear, 12px));
+}
+
+.notch[data-edge="left"] .ear.is-right,
+.notch[data-edge="right"] .ear.is-right {
+  top: auto;
+  bottom: calc(-1 * var(--ear, 12px));
+}
+
+.notch[data-edge="left"] .ear {
+  left: 0;
+  right: auto;
+}
+
+.notch[data-edge="right"] .ear {
+  left: auto;
+  right: 0;
+}
+
+.notch[data-edge="left"] .ear.is-left {
+  background: radial-gradient(circle at 100% 0, transparent calc(var(--ear, 12px) - 0.5px), var(--bezel) var(--ear, 12px));
+}
+
+.notch[data-edge="left"] .ear.is-right {
+  background: radial-gradient(circle at 100% 100%, transparent calc(var(--ear, 12px) - 0.5px), var(--bezel) var(--ear, 12px));
+}
+
+.notch[data-edge="right"] .ear.is-left {
+  background: radial-gradient(circle at 0 0, transparent calc(var(--ear, 12px) - 0.5px), var(--bezel) var(--ear, 12px));
+}
+
+.notch[data-edge="right"] .ear.is-right {
+  background: radial-gradient(circle at 0 100%, transparent calc(var(--ear, 12px) - 0.5px), var(--bezel) var(--ear, 12px));
+}
+
 .notch-clip {
   position: absolute;
   inset: 0;
   overflow: hidden;
   border-radius: inherit;
+}
+
+/* Docked off the top centre, or being dragged: placed by x/y from Pill.tsx instead of centred. */
+.stage.is-free {
+  display: block;
+  position: relative;
+}
+
+.stage.is-free .scaler {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  transform-origin: 0 0;
+}
+
+.stage.is-free .notch {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+/* ---------- docked on a side edge: the open views narrow and tall ---------- */
+
+.notch.is-narrow .topbar .clock {
+  display: none;
+}
+
+.notch.is-narrow .home {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.notch.is-narrow .home-main {
+  justify-content: flex-start;
+  gap: 14px;
+}
+
+.notch.is-narrow .player {
+  flex-direction: column;
+  justify-content: center;
+  gap: 22px;
+  padding-left: 0;
+  text-align: center;
+}
+
+.notch.is-narrow .player-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 100%;
+}
+
+.notch.is-narrow .player-row {
+  justify-content: center;
+}
+
+.notch.is-narrow .player-art {
+  width: 200px;
+  height: 200px;
+}
+
+.notch.is-narrow .timer-pane {
+  grid-template-columns: 1fr;
+  grid-template-rows: auto 1fr;
+}
+
+.notch.is-narrow .presets {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+/* A notification stacks: the app on top, then the title, then two lines of the message. */
+.notch.is-narrow .card-notification {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-content: start;
+  align-items: center;
+  gap: 8px 9px;
+  padding: 14px 16px 18px;
+}
+
+.notch.is-narrow .card-notification .card-text {
+  display: contents;
+}
+
+.notch.is-narrow .card-notification .card-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.notch.is-narrow .card-notification .card-app {
+  font-size: 12.5px;
+}
+
+.notch.is-narrow .card-notification .card-title,
+.notch.is-narrow .card-notification .card-body {
+  grid-column: 1 / -1;
+}
+
+.notch.is-narrow .card-notification .card-title {
+  margin-bottom: -6px;
+}
+
+.notch.is-narrow .card-notification .card-body {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  margin-top: 0;
+  white-space: normal;
+}
+
+.notch.is-narrow .card-timer {
+  left: 22px;
+  right: 22px;
+}
+
+/* A Claude request: the header may wrap, and Approve takes the whole bottom row. */
+.notch.is-narrow .card-permission {
+  padding: 14px 16px 16px;
+}
+
+.notch.is-narrow .perm-header {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+.notch.is-narrow .perm-actions {
+  grid-template-columns: 1fr 1fr;
+}
+
+.notch.is-narrow .perm-actions .btn-solid,
+.notch.is-narrow .perm-actions .btn:first-child:nth-last-child(2) {
+  grid-column: 1 / -1;
+}
+
+/* The timer's alarm stacks too: what ran out on top, its two buttons side by side below. */
+.notch.is-narrow .card-alarm {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-content: center;
+  gap: 12px 8px;
+  padding: 14px 16px 16px;
+}
+
+.notch.is-narrow .card-alarm .alarm-icon {
+  grid-row: 1;
+  grid-column: 1;
+}
+
+/* Shares the first row with the icon, beside it. */
+.notch.is-narrow .card-alarm .card-text {
+  grid-row: 1;
+  grid-column: 1 / -1;
+  padding-left: 52px;
+}
+
+.notch.is-narrow .card-alarm .alarm-button {
+  grid-row: 2;
+}
+
+/* Ctrl is held over it: it can be picked up. */
+.notch.is-grab {
+  cursor: grab;
+}
+
+.notch.is-dragging {
+  cursor: grabbing;
 }
 
 .content {
@@ -109,6 +317,24 @@ button {
   right: 0;
   margin-inline: auto;
   box-sizing: border-box;
+}
+
+/* Closed on a side edge: the usual closed view, turned to read along the edge. The individual
+   translate/rotate properties stay clear of the transform motion animates. */
+.content.is-sideways {
+  top: 50%;
+  left: 50%;
+  right: auto;
+  margin: 0;
+  translate: -50% -50%;
+}
+
+.content.is-sideways.on-left {
+  rotate: -90deg;
+}
+
+.content.is-sideways.on-right {
+  rotate: 90deg;
 }
 
 /* ---------- closed ---------- */
@@ -144,6 +370,41 @@ button {
   width: 21px;
   height: 21px;
   border-radius: 6px;
+}
+
+/* ---------- bubble ---------- */
+
+.bubble {
+  display: grid;
+  place-items: center;
+  height: 100%;
+}
+
+.bubble-art {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+}
+
+.bubble-clock {
+  font-family: var(--display);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: rgb(var(--accent));
+}
+
+/* A stopwatch past an hour: 1:02:03. */
+.bubble-clock.is-long {
+  font-size: 10.5px;
+}
+
+/* Nothing playing or running: a small pill, the notch in miniature. */
+.bubble-mark {
+  width: 18px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgb(255 255 255 / 0.8);
 }
 
 .visualizer {

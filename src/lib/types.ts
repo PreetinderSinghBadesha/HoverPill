@@ -2,6 +2,19 @@
 
 export type Rect = { x: number; y: number; width: number; height: number };
 
+/** Never the bottom: that's where the taskbar is. */
+export type Edge = "top" | "left" | "right";
+
+/**
+ * How to lay the pill out in its window (see `Layout` in notch.rs): as the notch at the top
+ * centre, or docked flat against an edge, meeting it around `x`, `y` (CSS px from the window's
+ * top-left).
+ */
+export type Layout = { mode: "notch" } | { mode: "docked"; edge: Edge; x: number; y: number };
+
+/** `shift`: after a drop, how far the window jumped (old origin minus new, CSS px). */
+export type DockEvent = { layout: Layout; shift: [number, number] | null };
+
 export type PermissionRule = {
   toolName: string;
   ruleContent?: string;

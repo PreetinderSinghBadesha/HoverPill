@@ -1,5 +1,6 @@
-//! The floating window: placement at the top-center of the chosen monitor, staying on top,
-//! and selective click-through.
+//! The floating window: placement at the top-center of the chosen monitor (or, after a
+//! Ctrl+drag, docked flat against the left, right or top edge of a screen; see `dock.rs`),
+//! staying on top, and selective click-through.
 //!
 //! The window is always click-through except while the notch is *open* (or showing a card you
 //! must click, like a Claude permission request) and the cursor is over it. A closed notch sits
@@ -23,9 +24,11 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, State, WebviewWindow};
 
 use crate::appbar;
+use crate::dock::{self, DockStore, Docked, Edge};
+use crate::events;
 #[cfg(target_os = "linux")]
 use crate::shellext;
-use crate::settings::{Display, SettingsStore};
+use crate::settings::{self, Display, SettingsStore};
 
 pub const LABEL: &str = "pill";
 
@@ -33,6 +36,10 @@ pub const LABEL: &str = "pill";
 /// `SIZES` in src/pill/Pill.tsx) plus its shadow.
 const WINDOW_WIDTH: f64 = 720.0;
 const WINDOW_HEIGHT: f64 = 340.0;
+/// Docked on a side edge the open views are narrow and tall (`SIDE_SIZES` in src/pill/Pill.tsx),
+/// so they don't reach far across the screen; the window is shaped to match.
+const SIDE_WINDOW_WIDTH: f64 = 420.0;
+const SIDE_WINDOW_HEIGHT: f64 = 560.0;
 
 /// ~60 Hz keeps hover feeling instant; each tick is one GetCursorPos/XQueryPointer.
 const POLL: Duration = Duration::from_millis(16);
@@ -54,6 +61,14 @@ const FULLSCREEN_CHECK_EVERY: u64 = 20;
 /// Height (CSS px, before scale) of the strip "Keep windows below the notch" reserves: the
 /// closed notch with something playing. Cards and the open notch still drop over windows.
 const RESERVED_HEIGHT: f64 = 32.0;
+/// How long the pointer rests on a notch docked off the top centre before it opens. Short: it's
+/// out of the way there, not over browser tabs you'd be reaching for.
+const DOCKED_DWELL: Duration = Duration::from_millis(150);
+/// A drop this close (logical px) either side of a monitor's top centre makes it the notch there
+/// again.
+const NOTCH_SNAP: f64 = 160.0;
+/// While dragging, follow the pointer faster than the hover poll.
+const DRAG_POLL: Duration = Duration::from_millis(8);
 
 /// The notch's box in CSS px, relative to the window's top-left corner.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -149,20 +164,40 @@ fn chosen_monitor(win: &WebviewWindow, wanted: Option<&str>) -> Result<Monitor, 
     }
 }
 
+fn find_monitor(win: &WebviewWindow, name: &str) -> Option<Monitor> {
+    win.available_monitors().ok()?.into_iter().find(|m| m.name().map(String::as_str) == Some(name))
+}
+
+/// How the webview should lay the pill out in its window. Sent as `pill:dock`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(tag = "mode", rename_all = "camelCase")]
+pub enum Layout {
+    /// Attached to the top edge, centred.
+    Notch,
+    /// Flat against `edge`; `x`, `y` are the middle of where it meets that edge, in CSS px from
+    /// the window's top-left. Opening grows it from there towards the middle of the screen.
+    Docked { edge: Edge, x: f64, y: f64 },
+}
+
 /// Where everything should be, in physical screen pixels.
 struct Target {
     /// Window position and size: horizontally centered at the top of the chosen monitor, sized
-    /// for the notch's scale and top gap (both applied in CSS; see src/pill/Pill.tsx).
+    /// for the notch's scale and top gap (both applied in CSS; see src/pill/Pill.tsx). Docked,
+    /// against its edge of the work area instead.
     pos: PhysicalPosition<i32>,
     size: PhysicalSize<u32>,
     /// The chosen monitor's bounds: x, y, width, height.
     monitor: (i32, i32, i32, i32),
     /// The strip to keep windows out of, if "Keep windows below the notch" is on.
     reserve: Option<appbar::Strip>,
+    layout: Layout,
 }
 
 fn target(win: &WebviewWindow) -> Result<Target, Box<dyn Error>> {
     let display = win.try_state::<SettingsStore>().map(|s| s.get().display).unwrap_or_default();
+    if let Some(docked) = win.try_state::<DockStore>().and_then(|d| d.get()) {
+        return docked_target(win, &display, &docked);
+    }
     let monitor = chosen_monitor(win, display.monitor.as_deref())?;
     let dpi = monitor.scale_factor();
     let width = WINDOW_WIDTH * display.scale;
@@ -175,7 +210,61 @@ fn target(win: &WebviewWindow) -> Result<Target, Box<dyn Error>> {
         let strip = ((display.top_offset + RESERVED_HEIGHT * display.scale) * dpi).round() as i32;
         (origin.x, origin.y, origin.x + mw, origin.y + strip)
     });
-    Ok(Target { pos: PhysicalPosition::new(x, origin.y), size, monitor: (origin.x, origin.y, mw, mh), reserve })
+    Ok(Target { pos: PhysicalPosition::new(x, origin.y), size, monitor: (origin.x, origin.y, mw, mh), reserve, layout: Layout::Notch })
+}
+
+/// The window flush against the docked edge of the work area (clear of the taskbar), centred on
+/// the notch's spot along it, with room for the full panel to open from that edge towards the
+/// middle of the screen. Near a corner the window stays on screen and the notch sits off its
+/// centre.
+fn docked_target(win: &WebviewWindow, display: &Display, docked: &Docked) -> Result<Target, Box<dyn Error>> {
+    let monitor = match docked.monitor.as_deref().and_then(|name| find_monitor(win, name)) {
+        Some(m) => m,
+        None => chosen_monitor(win, display.monitor.as_deref())?,
+    };
+    let dpi = monitor.scale_factor();
+    let unit = display.scale * dpi;
+    let (width, height) = match docked.edge {
+        Edge::Top => (WINDOW_WIDTH, WINDOW_HEIGHT),
+        Edge::Left | Edge::Right => (SIDE_WINDOW_WIDTH, SIDE_WINDOW_HEIGHT),
+    };
+    let size = PhysicalSize::new((width * unit).round() as u32, (height * unit).round() as u32);
+    let (w, h) = (size.width as f64, size.height as f64);
+    let area = monitor.work_area();
+    let (ax, ay) = (area.position.x as f64, area.position.y as f64);
+    let (aw, ah) = (area.size.width as f64, area.size.height as f64);
+    // The window's top-left, and where the notch meets the edge inside it.
+    let (x, y, px, py) = match docked.edge {
+        Edge::Left | Edge::Right => {
+            let centre = ay + docked.along * ah;
+            let y = within(centre - h / 2.0, ay, ay + ah - h).round();
+            let left = docked.edge == Edge::Left;
+            (if left { ax } else { ax + aw - w }, y, if left { 0.0 } else { w }, centre - y)
+        }
+        Edge::Top => {
+            let centre = ax + docked.along * aw;
+            let x = within(centre - w / 2.0, ax, ax + aw - w).round();
+            (x, ay, centre - x, 0.0)
+        }
+    };
+    let origin = *monitor.position();
+    Ok(Target {
+        pos: PhysicalPosition::new(x as i32, y as i32),
+        size,
+        monitor: (origin.x, origin.y, monitor.size().width as i32, monitor.size().height as i32),
+        reserve: None,
+        layout: Layout::Docked { edge: docked.edge, x: px / dpi, y: py / dpi },
+    })
+}
+
+/// `value` kept between `lo` and `hi`, or `lo` if the range is empty (a window taller than the
+/// work area sits at its top).
+fn within(value: f64, lo: f64, hi: f64) -> f64 {
+    if hi < lo {
+        lo
+    } else {
+        value.clamp(lo, hi)
+    }
 }
 
 /// The native window handle as an integer (0 where there isn't a Win32 one).
@@ -221,9 +310,19 @@ pub fn list_monitors(app: AppHandle) -> Result<Vec<MonitorInfo>, String> {
 }
 
 /// Moves/resizes the window only if it isn't already where it should be, so this is cheap to
-/// call periodically (monitors get plugged in, resolution and DPI scale change).
-pub fn place_top_center(win: &WebviewWindow) -> Result<(), Box<dyn Error>> {
+/// call periodically (monitors get plugged in, resolution and DPI scale change). Leaves it alone
+/// while it's being dragged.
+pub fn place(win: &WebviewWindow) -> Result<(), Box<dyn Error>> {
+    if dragging(win) {
+        return Ok(());
+    }
     let t = target(win)?;
+    move_to(win, &t)?;
+    announce(win, t.layout, None);
+    Ok(())
+}
+
+fn move_to(win: &WebviewWindow, t: &Target) -> Result<(), Box<dyn Error>> {
     // Position first: moving onto a monitor with a different DPI rescales the window.
     if win.outer_position()? != t.pos {
         win.set_position(t.pos)?;
@@ -235,6 +334,127 @@ pub fn place_top_center(win: &WebviewWindow) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[derive(Clone, Serialize)]
+struct DockEvent {
+    layout: Layout,
+    /// After a drop: how far the window jumped, in CSS px (old origin minus new). The bubble
+    /// moves back by this much first, so it slides from where it was let go instead of jumping.
+    shift: Option<(f64, f64)>,
+}
+
+static LAST_LAYOUT: Mutex<Option<Layout>> = Mutex::new(None);
+
+/// Tells the webview how to lay out, when that changed or after a drop.
+fn announce(win: &WebviewWindow, layout: Layout, shift: Option<(f64, f64)>) {
+    let mut last = LAST_LAYOUT.lock().unwrap();
+    if shift.is_none() && *last == Some(layout) {
+        return;
+    }
+    *last = Some(layout);
+    events::send(win.app_handle(), "pill:dock", DockEvent { layout, shift });
+}
+
+/// The layout right now, for a webview that's just loaded.
+#[tauri::command]
+pub fn dock_layout(app: AppHandle) -> Result<Layout, String> {
+    let win = app.get_webview_window(LABEL).ok_or("no pill window")?;
+    target(&win).map(|t| t.layout).map_err(|e| e.to_string())
+}
+
+// ---------- dragging ----------
+
+/// Ctrl+drag in progress: where the pointer and the window were when it began.
+#[derive(Default)]
+pub struct DragState(Mutex<Option<Drag>>);
+
+#[derive(Clone, Copy)]
+struct Drag {
+    cursor: PhysicalPosition<f64>,
+    window: PhysicalPosition<i32>,
+}
+
+fn dragging(win: &WebviewWindow) -> bool {
+    win.try_state::<DragState>().is_some_and(|d| d.0.lock().unwrap().is_some())
+}
+
+/// The webview saw Ctrl+press on the notch and has turned it into a bubble under the pointer.
+/// From here the hit-test loop moves the window with the pointer until the button comes up.
+#[tauri::command]
+pub fn begin_drag(app: AppHandle, state: State<DragState>) -> Result<(), String> {
+    let win = app.get_webview_window(LABEL).ok_or("no pill window")?;
+    let cursor = win.cursor_position().map_err(|e| e.to_string())?;
+    let window = win.outer_position().map_err(|e| e.to_string())?;
+    *state.0.lock().unwrap() = Some(Drag { cursor, window });
+    // While it's on the move there's no notch at the top to keep windows clear of.
+    appbar::sync(native_handle(&win), None);
+    Ok(())
+}
+
+/// The webview saw the button come up. On Windows the hit-test loop also watches the button
+/// itself, in case that event never arrives; whichever is first settles the drop.
+#[tauri::command]
+pub fn end_drag(app: AppHandle) {
+    if let Some(win) = app.get_webview_window(LABEL) {
+        finish_drag(&win);
+    }
+}
+
+/// Keeps the window where it was relative to the pointer when the drag began, so the bubble
+/// stays under it.
+fn follow_cursor(win: &WebviewWindow, drag: Drag) {
+    if let Ok(c) = win.cursor_position() {
+        let x = drag.window.x + (c.x - drag.cursor.x).round() as i32;
+        let y = drag.window.y + (c.y - drag.cursor.y).round() as i32;
+        let _ = win.set_position(PhysicalPosition::new(x, y));
+    }
+}
+
+fn finish_drag(win: &WebviewWindow) {
+    if win.state::<DragState>().0.lock().unwrap().take().is_none() {
+        return;
+    }
+    if let Err(e) = settle(win) {
+        eprintln!("hoverpill: couldn't place the dropped pill: {e}");
+        let _ = place(win);
+    }
+}
+
+/// Docks the dropped bubble on the nearest edge (left, right or top) of the monitor under the
+/// pointer, or makes it the notch again at a top centre, and saves that.
+fn settle(win: &WebviewWindow) -> Result<(), Box<dyn Error>> {
+    let cursor = win.cursor_position()?;
+    let before = win.outer_position()?;
+    let under = |m: &Monitor| {
+        let (p, s) = (m.position(), m.size());
+        cursor.x >= p.x as f64 && cursor.x < (p.x + s.width as i32) as f64 && cursor.y >= p.y as f64 && cursor.y < (p.y + s.height as i32) as f64
+    };
+    let monitor = match win.available_monitors()?.into_iter().find(under) {
+        Some(m) => m,
+        None => win.current_monitor()?.ok_or("no monitor under the pointer")?,
+    };
+    let area = monitor.work_area();
+    let work = (area.position.x, area.position.y, area.size.width as i32, area.size.height as i32);
+    let bounds = (monitor.position().x, monitor.position().y, monitor.size().width as i32, monitor.size().height as i32);
+    let name = monitor.name().cloned();
+    match dock::drop_target(work, bounds, (cursor.x, cursor.y), NOTCH_SNAP * monitor.scale_factor()) {
+        None => {
+            win.state::<DockStore>().set(None);
+            // Dropped at another monitor's top centre: the notch moves there, as if chosen in Settings.
+            let display = win.state::<SettingsStore>().get().display;
+            let current = chosen_monitor(win, display.monitor.as_deref()).ok().and_then(|m| m.name().cloned());
+            if let Some(name) = name.filter(|n| Some(n) != current.as_ref()) {
+                settings::set_monitor(win.app_handle(), name);
+            }
+        }
+        Some((edge, along)) => win.state::<DockStore>().set(Some(Docked { monitor: name, edge, along })),
+    }
+    let t = target(win)?;
+    move_to(win, &t)?;
+    let dpi = monitor.scale_factor();
+    announce(win, t.layout, Some(((before.x - t.pos.x) as f64 / dpi, (before.y - t.pos.y) as f64 / dpi)));
+    Ok(())
+}
+
 /// Cached so the 60 Hz loop makes one cross-thread call (cursor) instead of several.
 struct Geometry {
     origin: PhysicalPosition<i32>,
@@ -243,16 +463,20 @@ struct Geometry {
     size: PhysicalSize<u32>,
     scale: f64,
     monitor: (i32, i32, i32, i32),
+    /// Docked somewhere other than the top centre.
+    docked: bool,
 }
 
 impl Geometry {
     fn read(win: &WebviewWindow) -> Option<Self> {
+        let t = target(win).ok()?;
         Some(Self {
             origin: win.inner_position().ok()?,
             #[cfg(target_os = "linux")]
             size: win.inner_size().ok()?,
             scale: win.scale_factor().ok()?,
-            monitor: target(win).ok()?.monitor,
+            monitor: t.monitor,
+            docked: matches!(t.layout, Layout::Docked { .. }),
         })
     }
 
@@ -300,6 +524,8 @@ fn read_pointer(win: &WebviewWindow, geo: &Geometry) -> Pointer {
         && (at_window_top || (cursor.y - geo.monitor.1 as f64 <= EDGE_PX && cursor.y >= geo.monitor.1 as f64));
     #[cfg(not(target_os = "linux"))]
     let at_edge = within_edge_zone && at_window_top;
+    // Docked elsewhere, it opens by resting on it instead (the top-edge zone is the notch's).
+    let at_edge = at_edge && !geo.docked;
     Pointer {
         over: within_x && y >= r.y - HIT_PADDING && y <= r.y + r.height + HIT_PADDING,
         at_edge,
@@ -604,6 +830,11 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
         let mut fullscreen = false;
         let mut peek = false;
         let mut focus = FocusGuard::default();
+        // Ctrl is held over the closed notch, so it takes the click (see `pill:grab`).
+        let mut grab = false;
+        // Just dropped under the pointer: don't open until the pointer has moved off it.
+        let mut wait_for_leave = false;
+        let mut was_dragging = false;
         // Linux: follow the reported notch box as the X input region; start fully click-through.
         #[cfg(target_os = "linux")]
         let mut last_region: Option<Rect> = None;
@@ -613,12 +844,42 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
         let _ = win.set_ignore_cursor_events(true);
         let mut ticks: u64 = 0;
         loop {
+            // Dragging: the window follows the pointer and nothing else happens meanwhile.
+            let drag = *win.state::<DragState>().0.lock().unwrap();
+            if let Some(drag) = drag {
+                std::thread::sleep(DRAG_POLL);
+                if open {
+                    open = false;
+                    let _ = win.emit("pill:hover", false);
+                }
+                follow_cursor(&win, drag);
+                #[cfg(not(target_os = "linux"))]
+                if !accepting_input {
+                    accepting_input = true;
+                    let _ = win.set_ignore_cursor_events(false);
+                }
+                // The webview's pointerup can go missing while the window moves under it; the
+                // button itself has the final word.
+                #[cfg(windows)]
+                if !primary_button_down() {
+                    finish_drag(&win);
+                }
+                was_dragging = true;
+                continue;
+            }
+            // Dropped (here or by the webview's `end_drag`): it has moved, and it's under the pointer.
+            if was_dragging {
+                was_dragging = false;
+                geo = Geometry::read(&win);
+                wait_for_leave = true;
+            }
+
             let tick = ticks;
             ticks = ticks.wrapping_add(1);
             std::thread::sleep(POLL);
 
             if tick.is_multiple_of(SLOW_TICK_EVERY) {
-                if let Err(e) = place_top_center(&win) {
+                if let Err(e) = place(&win) {
                     eprintln!("hoverpill: placement failed: {e}");
                 }
                 reassert_topmost(&win);
@@ -651,12 +912,24 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
                 p.over = win.state::<HoverState>().0.load(Ordering::Relaxed);
                 p
             };
-            if !p.over || p.interactive {
+            let docked = geo.as_ref().is_some_and(|g| g.docked);
+            let ctrl = ctrl_down();
+            if !p.over {
+                wait_for_leave = false;
+            }
+            // Ctrl over the closed notch: it takes the click, so Ctrl+drag picks it up
+            // instead of Ctrl+clicking whatever is underneath.
+            let want_grab = ctrl && p.over && !p.interactive && !fullscreen;
+            if want_grab != grab {
+                grab = want_grab;
+                let _ = win.emit("pill:grab", grab);
+            }
+            if !p.over || p.interactive || ctrl || wait_for_leave {
                 resting_since = None;
             } else if resting_since.is_none() {
                 resting_since = Some(Instant::now());
             }
-            let rested = resting_since.is_some_and(|t| t.elapsed() >= DWELL);
+            let rested = resting_since.is_some_and(|t| t.elapsed() >= if docked { DOCKED_DWELL } else { DWELL });
 
             // Interactive (open, or a card with buttons): stays open while the pointer is over it.
             // Closed: only the top-edge push or a long rest opens it; it never takes clicks.
@@ -667,7 +940,7 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
             // pill stays click-through when closed, so hovering it can't be detected and the
             // top-edge push / dwell are the only triggers.
             #[cfg(target_os = "linux")]
-            let hover_open = p.over;
+            let hover_open = p.over && !wait_for_leave;
             #[cfg(not(target_os = "linux"))]
             let hover_open = false;
 
@@ -678,6 +951,9 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
                 p.over || p.at_edge
             } else if fullscreen {
                 false
+            } else if docked {
+                // Off the top centre it's out of the way, so resting on it briefly opens it.
+                rested || hover_open
             } else {
                 p.at_edge || hover_open || (display.open_on_hover && rested)
             };
@@ -690,7 +966,7 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
             }
 
             // Pointing at the closed notch fades it out so whatever is underneath shows.
-            let want_peek = p.over && !p.interactive && !open;
+            let want_peek = p.over && !p.interactive && !open && !docked && !grab;
             if want_peek != peek {
                 peek = want_peek;
                 let _ = win.emit("pill:peek", peek);
@@ -712,7 +988,9 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
             // Windows: the cursor is always readable, so a plain all-or-nothing toggle is fine.
             #[cfg(not(target_os = "linux"))]
             {
-                let want_input = p.interactive && p.over;
+                // Docked off the top centre it takes the pointer even closed: it's small and out of
+                // the way there, and pointing at it never clicks through to what's underneath.
+                let want_input = (p.over && (p.interactive || (docked && !fullscreen))) || grab;
                 if want_input != accepting_input {
                     accepting_input = want_input;
                     let _ = win.set_ignore_cursor_events(!want_input);
@@ -769,6 +1047,29 @@ impl FocusGuard {
 impl FocusGuard {
     fn remember(&mut self, _win: &WebviewWindow) {}
     fn give_back_if_taken(&mut self, _win: &WebviewWindow) {}
+}
+
+/// Whether Ctrl is held. Windows only: on Linux the notch's own input region already takes the
+/// click, and the webview sees Ctrl on it.
+#[cfg(windows)]
+fn ctrl_down() -> bool {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL};
+    unsafe { GetAsyncKeyState(VK_CONTROL as i32) as u16 & 0x8000 != 0 }
+}
+
+#[cfg(not(windows))]
+fn ctrl_down() -> bool {
+    false
+}
+
+/// Whether the primary mouse button is held. `GetAsyncKeyState` reads the physical buttons, so
+/// with the buttons swapped in Mouse settings the primary one is the right-hand button.
+#[cfg(windows)]
+fn primary_button_down() -> bool {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_SWAPBUTTON};
+    let button = if unsafe { GetSystemMetrics(SM_SWAPBUTTON) } != 0 { VK_RBUTTON } else { VK_LBUTTON };
+    unsafe { GetAsyncKeyState(button as i32) as u16 & 0x8000 != 0 }
 }
 
 /// Other "topmost" windows (borderless-fullscreen video players, the taskbar after it's clicked)

@@ -214,12 +214,27 @@ pub fn apply(app: &AppHandle, settings: &Settings) {
         if settings.media.enabled { media.current().map(crate::events::MediaState::from) } else { None },
     );
     if let Some(pill) = app.get_webview_window(crate::notch::LABEL) {
-        if let Err(e) = crate::notch::place_top_center(&pill) {
+        if let Err(e) = crate::notch::place(&pill) {
             eprintln!("hoverpill: placement failed: {e}");
         }
         crate::notch::set_all_workspaces(&pill, settings.display.all_workspaces);
     }
     let _ = app.emit("settings:changed", settings);
+}
+
+/// Moves the notch to another monitor, as choosing it in Settings would. Dropping the bubble at
+/// that monitor's top centre does this.
+pub fn set_monitor(app: &AppHandle, name: String) {
+    let store = app.state::<SettingsStore>();
+    let mut settings = store.get();
+    settings.display.monitor = Some(name);
+    match store.save(&settings) {
+        Ok(()) => {
+            *store.current.write().unwrap() = settings.clone();
+            apply(app, &settings);
+        }
+        Err(e) => eprintln!("hoverpill: {e}"),
+    }
 }
 
 pub const WINDOW_LABEL: &str = "settings";
