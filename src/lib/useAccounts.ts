@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { accountsStatus, askChatGpt, on, stopChatGpt } from "./bridge";
-import type { AccountsStatus, ChatTurn } from "./types";
+import type { AccountsStatus, ChatTurn, Screenshot } from "./types";
 
 const EMPTY: AccountsStatus = {
   google: { connected: false, busy: false, planUsage: false },
@@ -53,10 +53,12 @@ export function useChat() {
     return () => sub.off();
   }, []);
 
-  const ask = (question: string) => {
-    const text = question.trim();
+  /** `shot`: a captured screen to send with the question. */
+  const ask = (question: string, shot?: Screenshot) => {
+    // A screen on its own is a question too.
+    const text = question.trim() || (shot ? "Help me with what's on my screen." : "");
     if (!text || (pending && !pending.error)) return;
-    const next: ChatTurn[] = [...turns, { role: "user", text }];
+    const next: ChatTurn[] = [...turns, { role: "user", text, ...(shot ? { screen: shot.id, preview: shot.preview } : {}) }];
     const id = crypto.randomUUID();
     setTurns(next);
     update({ id, text: "" });

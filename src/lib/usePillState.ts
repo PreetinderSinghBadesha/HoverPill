@@ -30,6 +30,8 @@ type State = {
   calendar: CalendarEvent[];
   /** When the ChatGPT shortcut opened it (ms), until it closes again; 0 otherwise. */
   asked: number;
+  /** Locked open with the lock button. */
+  pinned: boolean;
 };
 
 type Action =
@@ -45,7 +47,8 @@ type Action =
   | { type: "decide"; id: string; decision: Decision }
   | { type: "cancelPermission"; id: string }
   | { type: "calendar"; value: CalendarEvent[] }
-  | { type: "ask" };
+  | { type: "ask" }
+  | { type: "pin"; value: boolean };
 
 function withTab(state: State, tab: Tab): State {
   return { ...state, tab, unseen: tab === "notifications" ? 0 : state.unseen };
@@ -98,6 +101,8 @@ function reducer(state: State, action: Action): State {
       return { ...state, calendar: action.value };
     case "ask":
       return { ...withTab(state, "chatgpt"), open: true, queue: [], asked: Date.now() };
+    case "pin":
+      return { ...state, pinned: action.value };
   }
 }
 
@@ -124,6 +129,7 @@ const initial = (): State => ({
   decisions: [],
   calendar: [],
   asked: 0,
+  pinned: false,
 });
 
 /**

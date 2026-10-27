@@ -8,6 +8,7 @@ mod broker;
 mod dock;
 mod events;
 mod notch;
+mod screen;
 mod settings;
 #[cfg(target_os = "linux")]
 mod shellext;
@@ -42,6 +43,7 @@ fn main() {
         .manage(notch::HitState::default())
         .manage(notch::HoverState::default())
         .manage(notch::DragState::default())
+        .manage(screen::Screens::default())
         .manage(events::Outbox::default())
         .invoke_handler(tauri::generate_handler![
             notch::set_hit_rect,
@@ -51,6 +53,7 @@ fn main() {
             events::current_media,
             events::pill_ready,
             events::copy_text,
+            screen::capture_screen,
             settings::get_settings,
             settings::open_settings,
             settings::set_settings,
@@ -60,6 +63,7 @@ fn main() {
             autostart::get_autostart,
             autostart::set_autostart,
             notch::notch_typing,
+            notch::notch_pinned,
             notch::begin_drag,
             notch::end_drag,
             notch::dock_layout,

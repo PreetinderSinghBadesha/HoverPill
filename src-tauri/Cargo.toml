@@ -30,8 +30,12 @@ base64 = "0.23"
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-clipboard-manager = "2"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 
 [target.'cfg(windows)'.dependencies]
+# Screenshots for ChatGPT. Windows only for now: on Linux it needs PipeWire and Wayland
+# libraries, and under Wayland a plain X11 capture shows most windows black.
+xcap = "0.9.8"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 # GTK/GDK for shaping the X input region under XWayland (see `set_input_region` in notch.rs) and

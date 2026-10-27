@@ -42,7 +42,10 @@ include the steps, examples or code the question needs, and match the length to 
 question gets a short answer and a hard one gets a full one. Don't pad or repeat the question. \
 Format with Markdown as you normally would: short paragraphs, bullet and numbered lists, **bold** for key terms, \
 `inline code`, fenced code blocks, and tables when they genuinely help. The panel is narrow, so prefer lists to \
-wide tables, and use at most small headings.";
+wide tables, and use at most small headings. \
+When a message comes with a screenshot, it is the user's screen right now, shared so you can help with what they're \
+doing: ground your answer in it, refer to what's visible by its label or where it is, and give concrete steps \
+(what to click, where, and what to type). If something you need isn't visible, say what to open or show.";
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct Saved {
@@ -394,6 +397,9 @@ pub async fn chatgpt_models(app: AppHandle) -> Result<Vec<ModelInfo>, String> {
 pub struct Turn {
     role: String,
     text: String,
+    /// A screenshot sent with this question (an id from `capture_screen`).
+    #[serde(default)]
+    screen: Option<String>,
 }
 
 /// Streamed back to the notch on `pill:chatgpt`.
@@ -453,10 +459,17 @@ async fn ask(app: &AppHandle, id: &str, turns: Vec<Turn>) -> Result<(), (String,
         Some(m) => m,
         None => chatgpt_models(app.clone()).await.map_err(plain)?.into_iter().next().map(|m| m.id).ok_or_else(|| plain("No ChatGPT models are available to this account.".into()))?,
     };
+    let screens = app.state::<crate::screen::Screens>();
     let input: Vec<Value> = turns
         .into_iter()
         .filter(|t| !t.text.trim().is_empty())
-        .map(|t| json!({ "role": if t.role == "assistant" { "assistant" } else { "user" }, "content": t.text }))
+        .map(|t| match t.screen.as_deref().filter(|_| t.role != "assistant").and_then(|id| screens.get(id)) {
+            Some(image) => json!({
+                "role": "user",
+                "content": [{ "type": "input_text", "text": t.text }, { "type": "input_image", "image_url": image }],
+            }),
+            None => json!({ "role": if t.role == "assistant" { "assistant" } else { "user" }, "content": t.text }),
+        })
         .collect();
     let res = http()
         .post(format!("{RESOURCE}/responses"))

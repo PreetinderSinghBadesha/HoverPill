@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { connectChatGpt, notchTyping, openChatGptUsage, openLink } from "../lib/bridge";
+import { captureScreen, connectChatGpt, notchTyping, openChatGptUsage, openLink } from "../lib/bridge";
 import type { Chat } from "../lib/useAccounts";
 import type {
   AccountStatus,
@@ -12,8 +12,10 @@ import type {
   PastDecision,
   PermissionRequest,
   ReceivedNotification,
+  Screenshot,
   Tab,
 } from "../lib/types";
+import { IS_LINUX } from "../lib/types";
 import { Icon, type IconName } from "./icons";
 import { CopyButton, Markdown } from "./markdown";
 import { formatCountdown, formatElapsed, MAX_DURATION, stopwatchElapsed, timerLeft, type Timers } from "../lib/useTimers";
@@ -170,6 +172,9 @@ export type ExpandedProps = {
   chatgpt: AccountStatus;
   /** When the ChatGPT shortcut opened the notch (ms), or 0. */
   asked: number;
+  /** Locked open; the lock button shows on the ChatGPT tab, and on every tab while locked. */
+  pinned: boolean;
+  onPin: (pinned: boolean) => void;
 };
 
 export function ExpandedView(props: ExpandedProps) {
@@ -202,6 +207,18 @@ export function ExpandedView(props: ExpandedProps) {
         </div>
         <div className="topbar-end">
           <span className="clock">{now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+          {(props.tab === "chatgpt" || props.pinned) && (
+            <button
+              type="button"
+              className={`round-button${props.pinned ? " is-on" : ""}`}
+              aria-label={props.pinned ? "Unlock: close the notch as usual" : "Lock: keep the notch open"}
+              aria-pressed={props.pinned}
+              title={props.pinned ? "Unlock" : "Keep open"}
+              onClick={() => props.onPin(!props.pinned)}
+            >
+              <Icon name={props.pinned ? "lock" : "unlock"} />
+            </button>
+          )}
           <button type="button" className="round-button" aria-label="Open settings" title="Settings" onClick={props.onSettings}>
             <Icon name="gear" />
           </button>
@@ -454,6 +471,9 @@ function ChatGptTab({ chat, account, onSettings, asked }: { chat: Chat; account:
 
 function ChatPanel({ chat, onSettings, asked }: { chat: Chat; onSettings: () => void; asked: number }) {
   const [draft, setDraft] = useState("");
+  // The screen captured for the next question, and a capture in progress or its error.
+  const [shot, setShot] = useState<Screenshot | null>(null);
+  const [capture, setCapture] = useState<"idle" | "busy" | string>("idle");
   const input = useRef<HTMLTextAreaElement>(null);
   const log = useRef<HTMLDivElement>(null);
   const { turns, pending, busy } = chat;
@@ -472,9 +492,22 @@ function ChatPanel({ chat, onSettings, asked }: { chat: Chat; onSettings: () => 
   }, [asked]);
 
   const send = () => {
-    if (!draft.trim() || busy) return;
-    chat.ask(draft);
+    if ((!draft.trim() && !shot) || busy) return;
+    chat.ask(draft, shot ?? undefined);
     setDraft("");
+    setShot(null);
+  };
+
+  const share = () => {
+    setCapture("busy");
+    captureScreen().then(
+      (s) => {
+        setShot(s);
+        setCapture("idle");
+        input.current?.focus();
+      },
+      (e) => setCapture(String(e)),
+    );
   };
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -490,9 +523,10 @@ function ChatPanel({ chat, onSettings, asked }: { chat: Chat; onSettings: () => 
         {turns.length === 0 && !pending && <p className="chat-hint">Ask anything. Answers use your ChatGPT plan and aren't saved.</p>}
         {turns.map((t, i) =>
           t.role === "user" ? (
-            <p key={i} className="chat-turn is-user">
-              {t.text}
-            </p>
+            <div key={i} className="chat-turn is-user">
+              <p>{t.text}</p>
+              {t.preview && <img className="chat-turn-shot" src={t.preview} alt="Your screen, sent with this question" />}
+            </div>
           ) : (
             <div key={i} className="chat-turn is-assistant">
               <Markdown text={t.text} />
@@ -520,7 +554,41 @@ function ChatPanel({ chat, onSettings, asked }: { chat: Chat; onSettings: () => 
           </p>
         )}
       </div>
+      {(shot || capture !== "idle") && (
+        <div className="chat-shot">
+          {shot ? (
+            <>
+              <img src={shot.preview} alt="" />
+              <span>Your screen goes with your next question</span>
+              <button type="button" className="round-button is-small" aria-label="Don't send the screen" title="Remove" onClick={() => setShot(null)}>
+                <Icon name="close" />
+              </button>
+            </>
+          ) : capture === "busy" ? (
+            <span>Capturing your screen…</span>
+          ) : (
+            <span className="chat-shot-error" role="alert">
+              {capture}{" "}
+              <button type="button" className="text-button inline" onClick={() => setCapture("idle")}>
+                OK
+              </button>
+            </span>
+          )}
+        </div>
+      )}
       <div className="chat-input">
+        {!IS_LINUX && (
+          <button
+            type="button"
+            className={`round-button${shot ? " is-on" : ""}`}
+            aria-label="Share your screen with the next question"
+            title="Share your screen"
+            disabled={capture === "busy"}
+            onClick={share}
+          >
+            <Icon name="screen" />
+          </button>
+        )}
         <textarea
           ref={input}
           rows={1}
@@ -537,7 +605,7 @@ function ChatPanel({ chat, onSettings, asked }: { chat: Chat; onSettings: () => 
             <Icon name="stop" />
           </button>
         ) : (
-          <button type="button" className="round-button is-send" aria-label="Send" title="Send" disabled={!draft.trim()} onClick={send}>
+          <button type="button" className="round-button is-send" aria-label="Send" title="Send" disabled={!draft.trim() && !shot} onClick={send}>
             <Icon name="send" />
           </button>
         )}

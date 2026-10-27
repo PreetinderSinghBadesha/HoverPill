@@ -1726,9 +1726,67 @@ button {
   color: var(--smoke);
 }
 
-.chat-turn.is-user::before {
+.chat-turn.is-user > p {
+  margin: 0;
+}
+
+.chat-turn.is-user > p::before {
   content: "You: ";
   color: rgb(255 255 255 / 0.35);
+}
+
+/* The screen sent with a question. */
+.chat-turn-shot {
+  display: block;
+  width: 120px;
+  margin-top: 6px;
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px var(--hairline);
+}
+
+/* The screen waiting to go with the next question, above the question box. */
+.chat-shot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: -4px;
+  padding: 6px 6px 6px 8px;
+  border-radius: 12px;
+  background: var(--graphite);
+  color: var(--smoke);
+  font-size: 12.5px;
+}
+
+.chat-shot img {
+  width: 54px;
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px var(--hairline);
+}
+
+.chat-shot span {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-shot-error {
+  color: var(--ink);
+}
+
+/* The lock button while the notch is locked open. */
+.topbar .round-button.is-on,
+.topbar .round-button.is-on:hover {
+  background: var(--ink);
+  color: #000;
+}
+
+/* With the screen button in front, it supplies the left padding. */
+.chat-input:has(> .round-button:first-child) {
+  padding-left: 5px;
+}
+
+.chat-input .round-button.is-on {
+  background: var(--ink);
+  color: #000;
 }
 
 .chat-caret {

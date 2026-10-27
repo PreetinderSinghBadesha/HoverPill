@@ -84,6 +84,14 @@ pub struct HitState {
     shape: Mutex<Option<(Rect, bool)>>,
     /// Someone is typing in the notch (asking ChatGPT): it keeps the keyboard and stays open.
     typing: AtomicBool,
+    /// Locked open with the lock button: it stays open, wherever the pointer goes, until unlocked.
+    pinned: AtomicBool,
+}
+
+/// The lock button in the open notch: keep it open (or let it close again as usual).
+#[tauri::command]
+pub fn notch_pinned(pinned: bool, state: State<HitState>) {
+    state.pinned.store(pinned, Ordering::Relaxed);
 }
 
 /// The notch normally never takes keyboard focus. While the user types a question it has to,
@@ -265,6 +273,37 @@ fn within(value: f64, lo: f64, hi: f64) -> f64 {
         lo
     } else {
         value.clamp(lo, hi)
+    }
+}
+
+/// The bounds (physical px: x, y, width, height) of the monitor the notch is on.
+pub fn monitor_bounds(win: &WebviewWindow) -> Result<(i32, i32, i32, i32), String> {
+    target(win).map(|t| t.monitor).map_err(|e| e.to_string())
+}
+
+/// Leaves the notch out of screen captures, or puts it back. Only while HoverPill takes its own
+/// screenshot for ChatGPT: other screenshots and recordings show the notch as usual. Windows
+/// only; on Linux there's no such switch, so an open notch appears in its own screenshots.
+pub fn exclude_from_capture(win: &WebviewWindow, exclude: bool) {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE, WDA_NONE};
+        let hwnd = native_handle(win);
+        // The window's own thread sets its affinity; wait for it so the capture comes after.
+        let (done, wait) = std::sync::mpsc::channel();
+        let _ = win.run_on_main_thread(move || {
+            unsafe { SetWindowDisplayAffinity(hwnd as _, if exclude { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE }) };
+            let _ = done.send(());
+        });
+        let _ = wait.recv_timeout(Duration::from_millis(500));
+        // Give the compositor a frame or two to redraw without it.
+        if exclude {
+            std::thread::sleep(Duration::from_millis(80));
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (win, exclude);
     }
 }
 
@@ -946,7 +985,8 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
             let hover_open = false;
 
             let typing = win.state::<HitState>().typing.load(Ordering::Relaxed);
-            let want_open = if typing {
+            let pinned = win.state::<HitState>().pinned.load(Ordering::Relaxed);
+            let want_open = if typing || pinned {
                 true
             } else if p.interactive {
                 p.over || p.at_edge

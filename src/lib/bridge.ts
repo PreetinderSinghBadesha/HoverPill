@@ -16,6 +16,7 @@ import {
   type NotificationItem,
   type PermissionRequest,
   type PlayerInfo,
+  type Screenshot,
   type Rect,
   type Settings,
 } from "./types";
@@ -121,6 +122,11 @@ export async function currentMedia(): Promise<MediaState | null> {
   return inTauri ? invoke<MediaState | null>("current_media") : null;
 }
 
+/** While true the notch stays open, wherever the pointer goes (the lock button). */
+export function pinNotch(pinned: boolean) {
+  if (inTauri) invoke("notch_pinned", { pinned }).catch(console.error);
+}
+
 /** While true the notch keeps the keyboard (and stays open) so a question can be typed. */
 export function notchTyping(active: boolean) {
   if (inTauri) invoke("notch_typing", { active }).catch(console.error);
@@ -178,7 +184,15 @@ export async function chatGptModels(): Promise<ModelInfo[]> {
 
 /** Sends the conversation; the answer streams back on `pill:chatgpt` under `id`. */
 export function askChatGpt(id: string, turns: ChatTurn[]) {
-  if (inTauri) invoke("chatgpt_ask", { id, turns }).catch(console.error);
+  // Screenshots go by id; Rust has the image. The thumbnails stay here.
+  const sent = turns.map(({ role, text, screen }) => ({ role, text, screen }));
+  if (inTauri) invoke("chatgpt_ask", { id, turns: sent }).catch(console.error);
+}
+
+/** Captures the notch's screen (without the notch) for the next question. Rejects with a message. */
+export async function captureScreen(): Promise<Screenshot> {
+  if (inTauri) return invoke<Screenshot>("capture_screen");
+  throw new Error("Screen capture needs the app.");
 }
 
 export function stopChatGpt(id: string) {

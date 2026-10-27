@@ -26,6 +26,10 @@ const PATHS = {
   video: "M4 7.5h10.5v9H4zM14.5 10.5l5-3v9l-5-3",
   calendar: "M5 6h14v14H5zM5 10h14M9 3.5v4M15 3.5v4",
   copy: "M9 9h10v10H9zM15 9V5H5v10h4",
+  screen: "M4 5h16v11H4zM9 20h6M12 16v4",
+  close: "M7 7l10 10M17 7 7 17",
+  lock: "M8 11V8a4 4 0 0 1 8 0v3M6 11h12v9H6z",
+  unlock: "M8 11V8a4 4 0 0 1 7.7-1.5M6 11h12v9H6z",
   check: "M5 12.5l4.5 4.5L19 7.5",
 } as const;
 

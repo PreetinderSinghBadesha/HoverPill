@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent } from "react";
 import { AnimatePresence, motion, useMotionValue, type Transition } from "motion/react";
-import { beginDrag, dockLayout, endDrag, inTauri, mediaCommand, notchTyping, on, openSettings, resolvePermission, setHitRect } from "../lib/bridge";
+import { beginDrag, dockLayout, endDrag, inTauri, mediaCommand, notchTyping, on, openSettings, pinNotch, resolvePermission, setHitRect } from "../lib/bridge";
 import { pickView, usePillState } from "../lib/usePillState";
 import { formatCountdown, formatElapsed, stopwatchElapsed, timerLeft, useTimers } from "../lib/useTimers";
 import { useLiveSettings } from "../lib/useSettings";
@@ -133,7 +133,7 @@ export function Pill() {
   const size = drag ? BUBBLE_SIZE : upright ? { ...flat, width: flat.height, height: flat.width } : flat;
   // Behind a fullscreen app only what's waiting on you (a Claude request, a finished timer) shows,
   // or ChatGPT when its shortcut was pressed.
-  const hidden = state.fullscreen && view !== "permission" && view !== "alarm" && !state.asked;
+  const hidden = state.fullscreen && view !== "permission" && view !== "alarm" && !state.asked && !state.pinned;
   // Closed (and a passing notification) never takes clicks, so browser tabs underneath stay usable.
   const interactive = !hidden && !drag && (view === "expanded" || view === "permission" || view === "alarm");
   // Pointing at the closed notch fades it, unless resting is how you open it.
@@ -343,6 +343,11 @@ export function Pill() {
                     chat={chat}
                     chatgpt={accounts.chatgpt}
                     asked={state.asked}
+                    pinned={state.pinned}
+                    onPin={(value) => {
+                      pinNotch(value);
+                      dispatch({ type: "pin", value });
+                    }}
                   />
                 )}
               </motion.div>

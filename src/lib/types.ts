@@ -100,7 +100,11 @@ export type ChatChunk =
   | { kind: "done"; id: string }
   | { kind: "error"; id: string; message: string; usage: boolean };
 
-export type ChatTurn = { role: "user" | "assistant"; text: string };
+/** `screen`: a screenshot sent with the question (its id in Rust); `preview`: its thumbnail. */
+export type ChatTurn = { role: "user" | "assistant"; text: string; screen?: string; preview?: string };
+
+/** A captured screen, kept in Rust until it's sent: its id and a thumbnail `data:` URL. */
+export type Screenshot = { id: string; preview: string };
 
 export type ModelInfo = { id: string; label: string };
 
