@@ -128,7 +128,7 @@ To work on the UI in a normal browser, run `npm run dev` and open http://localho
 2. Tag and push: `git tag v0.3.0 && git push origin v0.3.0`.
 3. The [Release workflow](.github/workflows/release.yml) builds the Windows installer and the Linux `.deb`, `.rpm` and AppImage, and attaches them all to one draft release for that tag. Add the notes on GitHub, then publish it.
 
-The workflow refuses a tag that doesn't match the version in `tauri.conf.json`. It signs the installers for the in-app updater with the `TAURI_SIGNING_PRIVATE_KEY` repository secret (the matching public key is in `tauri.conf.json`) and attaches a `latest.json` the updater reads. To build a Google sign-in client into releases, so people can connect Google Calendar without making their own, add `HOVERPILL_GOOGLE_CLIENT_ID` and `HOVERPILL_GOOGLE_CLIENT_SECRET` as repository secrets.
+The workflow refuses a tag that doesn't match the version in `tauri.conf.json`. It signs the installers for the in-app updater with the `TAURI_SIGNING_PRIVATE_KEY` repository secret (the matching public key is in `tauri.conf.json`) and attaches a `latest.json` the updater reads. Google Calendar signs in with HoverPill's own OAuth client, built in at compile time from the `HOVERPILL_GOOGLE_CLIENT_ID` and `HOVERPILL_GOOGLE_CLIENT_SECRET` repository secrets; a build without them can't connect Google Calendar.
 
 [CI](.github/workflows/ci.yml) type-checks and builds the interface, then runs clippy with warnings as errors and the tests on Windows **and** Linux, on every push and pull request. Dependabot opens weekly pull requests for npm, Cargo and Actions updates.
 

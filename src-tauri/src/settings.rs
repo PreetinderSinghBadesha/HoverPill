@@ -123,9 +123,6 @@ pub struct Calendar {
     pub enabled: bool,
     /// Minutes before an event starts to drop a reminder; 0 turns reminders off.
     pub reminder_minutes: f64,
-    /// The user's own Google OAuth client ("Desktop app"). Empty uses one built in, if any.
-    pub client_id: String,
-    pub client_secret: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -179,7 +176,7 @@ impl Default for Media {
 
 impl Default for Calendar {
     fn default() -> Self {
-        Self { enabled: true, reminder_minutes: 5.0, client_id: String::new(), client_secret: String::new() }
+        Self { enabled: true, reminder_minutes: 5.0 }
     }
 }
 
@@ -214,8 +211,6 @@ impl Settings {
         self.notifications.blocked_apps = tidy(self.notifications.blocked_apps);
         self.media.ignored_players = tidy(self.media.ignored_players);
         self.calendar.reminder_minutes = clamp(REMINDER_RANGE, self.calendar.reminder_minutes, Calendar::default().reminder_minutes).round();
-        self.calendar.client_id = self.calendar.client_id.trim().to_string();
-        self.calendar.client_secret = self.calendar.client_secret.trim().to_string();
         self.chatgpt.model = self.chatgpt.model.filter(|m| !m.trim().is_empty());
         self.chatgpt.shortcut = self.chatgpt.shortcut.trim().to_string();
         self
@@ -490,6 +485,16 @@ mod tests {
         // Added after 0.4.1: an older file keeps the dots and the level cards on.
         assert!(s.privacy.camera_indicator && s.privacy.microphone_indicator);
         assert!(s.system.show_volume && s.system.show_brightness && s.system.show_battery);
+    }
+
+    #[test]
+    fn a_google_client_from_older_settings_is_dropped() {
+        let s: Settings =
+            serde_json::from_str(r#"{ "calendar": { "enabled": false, "clientId": "1-abc.apps.googleusercontent.com", "clientSecret": "x" } }"#)
+                .unwrap();
+        assert!(!s.calendar.enabled);
+        let saved = serde_json::to_string(&s).unwrap();
+        assert!(!saved.contains("clientId") && !saved.contains("clientSecret"));
     }
 
     #[test]

@@ -135,8 +135,6 @@ export type AccountStatus = {
   error?: string;
   /** ChatGPT only: requests can use the user's ChatGPT plan. */
   planUsage: boolean;
-  /** Google only: the app has a sign-in client built in, so none needs setting up. */
-  builtInClient?: boolean;
 };
 
 export type AccountsStatus = { google: AccountStatus; chatgpt: AccountStatus };
@@ -195,9 +193,6 @@ export type Settings = {
     enabled: boolean;
     /** Minutes before an event to drop a reminder; 0 turns reminders off. */
     reminderMinutes: number;
-    /** The user's own Google OAuth client ("Desktop app"). */
-    clientId: string;
-    clientSecret: string;
   };
   updates: {
     /** Look for a new version now and then, and get it ready to install. */
@@ -243,7 +238,7 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   notifications: { enabled: true, durationSecs: 4.5, blockedApps: [] },
   media: { enabled: true, ignoredPlayers: [] },
-  calendar: { enabled: true, reminderMinutes: 5, clientId: "", clientSecret: "" },
+  calendar: { enabled: true, reminderMinutes: 5 },
   chatgpt: { model: null, shortcut: "Ctrl+Alt+G" },
   updates: { autoCheck: true },
   privacy: { cameraIndicator: true, microphoneIndicator: true },
