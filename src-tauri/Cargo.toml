@@ -49,7 +49,7 @@ gdkx11 = "0.18"
 x11-dl = "2"
 # Client for the GNOME Shell extension that reports fullscreen state for native
 # Wayland apps (see `shellext.rs`).
-zbus = "5"
+zbus = "6"
 
 [profile.release]
 lto = true
