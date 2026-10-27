@@ -224,6 +224,37 @@ mod platform {
         pub id: String,
     }
 
+    /// Who a PipeWire/PulseAudio stream belongs to: its app name, else the executable, else the
+    /// node's name, made readable (see `readable`).
+    fn stream_user(props: &Value) -> Option<User> {
+        let text = |name: &str| props[name].as_str().map(str::trim).filter(|s| !s.is_empty());
+        let binary = text("application.process.binary");
+        let app = text("application.name").or(binary).or_else(|| text("node.name"))?;
+        Some(User { app: readable(app), id: binary.unwrap_or(app).to_string() })
+    }
+
+    /// Some apps name their streams with their reverse-DNS app ID: `org.gnome.Snapshot` →
+    /// "Snapshot", `com.discordapp.Discord` → "Discord". Anything that reads as a name already
+    /// (spaces, or fewer than three dot-separated parts) is left as it is.
+    pub(super) fn readable(name: &str) -> String {
+        let parts: Vec<&str> = name.split('.').collect();
+        let id_like = parts.len() >= 3
+            && parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'));
+        if !id_like {
+            return name.to_string();
+        }
+        // The last part is the app; split CamelCase so `TextEditor` reads "Text Editor".
+        let last = parts[parts.len() - 1];
+        let mut out = String::with_capacity(last.len() + 4);
+        for (i, c) in last.char_indices() {
+            if i > 0 && c.is_uppercase() && last[..i].chars().next_back().is_some_and(|p| p.is_lowercase()) {
+                out.push(' ');
+            }
+            out.push(c);
+        }
+        out
+    }
+
     // ---------- microphone ----------
 
     fn pactl_json(what: &str) -> Option<Value> {
@@ -265,10 +296,7 @@ mod platform {
             if !on_mic || stream["corked"].as_bool() == Some(true) || flag("stream.capture.sink") || flag("resample.peaks") {
                 continue;
             }
-            let text = |name: &str| props[name].as_str().map(str::trim).filter(|s| !s.is_empty());
-            let binary = text("application.process.binary");
-            let Some(app) = text("application.name").or(binary).or_else(|| text("node.name")) else { continue };
-            let user = User { app: app.to_string(), id: binary.unwrap_or(app).to_string() };
+            let Some(user) = stream_user(props) else { continue };
             if !users.iter().any(|u| u.app == user.app) {
                 users.push(user);
             }
@@ -361,10 +389,7 @@ mod platform {
             if props["media.class"].as_str() != Some("Stream/Input/Video") || info["state"].as_str() != Some("running") {
                 continue;
             }
-            let text = |name: &str| props[name].as_str().map(str::trim).filter(|s| !s.is_empty());
-            let binary = text("application.process.binary");
-            let Some(app) = text("application.name").or(binary).or_else(|| text("node.name")) else { continue };
-            let user = User { app: app.to_string(), id: binary.unwrap_or(app).to_string() };
+            let Some(user) = stream_user(props) else { continue };
             if !users.iter().any(|u| u.app == user.app) {
                 users.push(user);
             }
@@ -561,7 +586,7 @@ mod tests {
 
 #[cfg(all(test, target_os = "linux"))]
 mod linux_tests {
-    use super::platform::{friendly, pipewire_video_apps, recording_apps, User};
+    use super::platform::{friendly, pipewire_video_apps, readable, recording_apps, User};
     use serde_json::json;
 
     fn user(app: &str, id: &str) -> User {
@@ -609,10 +634,23 @@ mod linux_tests {
     fn camera_apps_through_pipewire() {
         let dump = json!([
             { "info": { "state": "suspended", "props": { "media.class": "Video/Source", "node.name": "v4l2_input" } } },
-            { "info": { "state": "running", "props": { "media.class": "Stream/Input/Video", "application.name": "Snapshot" } } },
+            { "info": { "state": "running", "props": { "media.class": "Stream/Input/Video", "application.name": "org.gnome.Snapshot" } } },
             { "info": { "state": "paused", "props": { "media.class": "Stream/Input/Video", "application.name": "Cheese" } } },
         ]);
-        assert_eq!(pipewire_video_apps(&dump), vec![user("Snapshot", "Snapshot")]);
+        assert_eq!(pipewire_video_apps(&dump), vec![user("Snapshot", "org.gnome.Snapshot")]);
+    }
+
+    #[test]
+    fn app_ids_read_as_names() {
+        assert_eq!(readable("org.gnome.Snapshot"), "Snapshot");
+        assert_eq!(readable("com.discordapp.Discord"), "Discord");
+        assert_eq!(readable("org.gnome.TextEditor"), "Text Editor");
+        // Already names: left alone.
+        assert_eq!(readable("Google Chrome"), "Google Chrome");
+        assert_eq!(readable("Camera"), "Camera");
+        assert_eq!(readable("pw-record"), "pw-record");
+        assert_eq!(readable("python3.14"), "python3.14");
+        assert_eq!(readable("Mozilla Firefox 1.2.3"), "Mozilla Firefox 1.2.3");
     }
 
     #[test]
