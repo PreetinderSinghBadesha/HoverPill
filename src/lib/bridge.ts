@@ -117,9 +117,9 @@ export async function installUpdate(): Promise<void> {
   if (inTauri) await invoke("install_update");
 }
 
-/** Checks for a newer version now; resolves to it, or null if this is the latest. */
-export async function checkForUpdates(): Promise<string | null> {
-  return inTauri ? invoke<string | null>("check_for_updates") : null;
+/** Checks for a newer version now: what to do about it, or null if this is the latest. */
+export async function checkForUpdates(): Promise<UpdateOffer | null> {
+  return inTauri ? invoke<UpdateOffer | null>("check_for_updates") : null;
 }
 
 export function openSettings() {

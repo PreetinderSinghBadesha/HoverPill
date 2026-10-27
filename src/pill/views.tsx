@@ -494,6 +494,20 @@ function ChatGptTab({ chat, account, onSettings, asked }: { chat: Chat; account:
   return <ChatPanel chat={chat} onSettings={onSettings} asked={asked} />;
 }
 
+// Panels currently mounted, so a remount (React does so in development, and the account status
+// arriving swaps the sign-in view for the panel) doesn't hand the keyboard back in between.
+let openChatPanels = 0;
+
+/**
+ * X hands the notch its keyboard focus a moment after the shortcut, so the blur that comes first
+ * isn't the user leaving. Wait for the focus to settle and only let go if it really went away.
+ */
+export function releaseTypingAfterBlur() {
+  window.setTimeout(() => {
+    if (!document.hasFocus()) notchTyping(false);
+  }, 400);
+}
+
 function ChatPanel({ chat, onSettings, asked }: { chat: Chat; onSettings: () => void; asked: number }) {
   const [draft, setDraft] = useState("");
   // The screen captured for the next question, and a capture in progress or its error.
@@ -508,13 +522,22 @@ function ChatPanel({ chat, onSettings, asked }: { chat: Chat; onSettings: () => 
     log.current?.scrollTo({ top: log.current.scrollHeight });
   }, [turns.length, pending?.text, pending?.error]);
 
-  // Leaving the tab (or the notch folding up) gives the keyboard back.
-  useEffect(() => () => notchTyping(false), []);
+  // Leaving the tab (or the notch folding up) gives the keyboard back, once nothing has replaced
+  // this panel in the same tick.
+  useEffect(() => {
+    openChatPanels += 1;
+    return () => {
+      openChatPanels -= 1;
+      if (openChatPanels > 0) return;
+      window.setTimeout(() => {
+        if (openChatPanels === 0) notchTyping(false);
+      }, 0);
+    };
+  }, []);
 
   // Opened by the ChatGPT shortcut just now: straight into the question box, keyboard and all.
-  // Claimed here rather than left to the box's focus event: when this panel is mounted twice
-  // (React does so in development), the cleanup above hands the keyboard back in between, and
-  // the box, already focused, doesn't fire focus again.
+  // The box's focus event claims the keyboard too, but it doesn't fire when the box is already
+  // focused (this panel mounting again), so claim it here as well.
   useEffect(() => {
     if (!asked || Date.now() - asked >= 2000) return;
     input.current?.focus();
@@ -613,18 +636,16 @@ function ChatPanel({ chat, onSettings, asked }: { chat: Chat; onSettings: () => 
         </div>
       )}
       <div className="chat-input">
-        {!IS_LINUX && (
-          <button
-            type="button"
-            className={`round-button${shot ? " is-on" : ""}`}
-            aria-label="Share your screen with the next question"
-            title="Share your screen"
-            disabled={capture === "busy"}
-            onClick={share}
-          >
-            <Icon name="screen" />
-          </button>
-        )}
+        <button
+          type="button"
+          className={`round-button${shot ? " is-on" : ""}`}
+          aria-label="Share your screen with the next question"
+          title="Share your screen"
+          disabled={capture === "busy"}
+          onClick={share}
+        >
+          <Icon name="screen" />
+        </button>
         <textarea
           ref={input}
           rows={1}
@@ -636,7 +657,7 @@ function ChatPanel({ chat, onSettings, asked }: { chat: Chat; onSettings: () => 
           onFocus={() => notchTyping(true)}
           // On Windows Rust ends typing when another app comes to the front: a blur here can be
           // focus moving within the notch (letting go of Alt, for one), which mustn't close it.
-          onBlur={IS_LINUX ? () => notchTyping(false) : undefined}
+          onBlur={IS_LINUX ? releaseTypingAfterBlur : undefined}
         />
         {busy ? (
           <button type="button" className="round-button" aria-label="Stop the answer" title="Stop" onClick={chat.stop}>

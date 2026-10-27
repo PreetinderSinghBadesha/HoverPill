@@ -165,10 +165,19 @@ fn needs_logout_notice(changed: bool, loaded: Option<bool>) -> bool {
 
 /// GNOME sessions list themselves in `XDG_CURRENT_DESKTOP` ("GNOME", but also
 /// "ubuntu:GNOME" or "GNOME-Flashback").
-fn gnome_session() -> bool {
+pub fn gnome_session() -> bool {
     std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|desktop| {
         desktop.to_ascii_lowercase().split(':').any(|part| matches!(part, "gnome" | "unity"))
     })
+}
+
+/// A GNOME session running under Wayland (the pill itself uses XWayland, but the session is
+/// still Wayland: `XDG_SESSION_TYPE` and `WAYLAND_DISPLAY` are untouched by `GDK_BACKEND`).
+/// X key grabs don't work there, so shortcuts go through GNOME's own keybindings instead.
+pub fn gnome_wayland() -> bool {
+    let wayland = std::env::var("XDG_SESSION_TYPE").is_ok_and(|kind| kind.eq_ignore_ascii_case("wayland"))
+        || std::env::var_os("WAYLAND_DISPLAY").is_some();
+    wayland && gnome_session()
 }
 
 /// Writes `contents` only if the file on disk differs; `true` when written.

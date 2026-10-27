@@ -37,7 +37,13 @@ fn main() {
         // Must be first: a second copy (e.g. launched by hand after starting at login) exits
         // here instead of opening another pill and fighting over the broker port. Launching
         // HoverPill again is a natural way to look for its settings, so open them.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| settings::open_window(app)))
+        // A second copy is either the user launching HoverPill again (look for its settings) or
+        // one of the GNOME keybindings we install (which run `hoverpill --summon=...`).
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if !shortcut::summon_from_args(app, &args) {
+                settings::open_window(app);
+            }
+        }))
         .plugin(autostart::plugin())
         .plugin(shortcut::plugin())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -100,6 +106,23 @@ fn main() {
             let pill = app
                 .get_webview_window(notch::LABEL)
                 .ok_or("pill window missing from tauri.conf.json")?;
+            // Linux: a non-resizable GTK window gets fixed min == max size hints, and GTK then
+            // clamps every `set_size` to the width it was created with (720), even though the
+            // docked side layout only needs 420. The extra width made the notch stop short of
+            // the screen edge when docked right. Tao re-applies the config's `resizable: false`
+            // on the window's first configure event, so lift it from a handler connected after
+            // Tao's one (which runs later for the same event). With decorations off, the user
+            // still can't resize it by hand; this only lets the placement code shrink it.
+            #[cfg(target_os = "linux")]
+            if let Ok(gtk_win) = pill.gtk_window() {
+                use gtk::prelude::*;
+                gtk_win.connect_configure_event(|gtk_win, _| {
+                    if !gtk_win.is_resizable() {
+                        gtk_win.set_resizable(true);
+                    }
+                    false
+                });
+            }
             notch::place(&pill)?;
             // Apply the saved all-desktops choice at startup; `settings::apply` only runs it when
             // the setting changes. On Linux this is a no-op until the GTK window is realized, so
@@ -146,6 +169,10 @@ fn main() {
 
             let settings = app.state::<SettingsStore>().get();
             shortcut::apply(app.handle(), &settings.display.shortcut, &settings.chatgpt.shortcut);
+            // Started by a shortcut while HoverPill wasn't running: the keybinding launched us
+            // with `--summon=...`, and the notification listener and webview are now set up.
+            let args: Vec<String> = std::env::args().skip(1).collect();
+            shortcut::summon_from_args(app.handle(), &args);
             accounts::google::spawn(app.handle().clone());
             updater::spawn(app.handle().clone());
             autostart::refresh(app.handle());
