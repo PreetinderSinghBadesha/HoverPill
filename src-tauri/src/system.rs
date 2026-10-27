@@ -1,8 +1,9 @@
 //! Volume, screen brightness and battery, pushed to the notch so changing them shows a level
 //! bar or a charging card there instead of the system's own pop-up in the corner.
 //!
-//! Windows reads the default audio endpoint (WASAPI), the built-in panel's brightness (Dxva2,
-//! which only works where the panel supports it) and the battery (GetSystemPowerStatus).
+//! Windows reads the default audio endpoint (WASAPI), the built-in panel's brightness (WMI's
+//! `WmiMonitorBrightness`, which only laptop and tablet panels answer) and the battery
+//! (GetSystemPowerStatus).
 //! Linux reads the default PulseAudio/PipeWire sink (`pactl`, or `wpctl`), the backlight under
 //! `/sys/class/backlight` and the battery under `/sys/class/power_supply`.
 
@@ -51,20 +52,31 @@ pub struct SystemState {
 mod platform {
     use super::*;
 
-    use windows::core::GUID;
-    use windows::Win32::Devices::Display::GetMonitorBrightness;
-    use windows::Win32::Foundation::{HANDLE, POINT};
-    use windows::Win32::Graphics::Gdi::{MonitorFromPoint, MONITOR_DEFAULTTOPRIMARY};
+    use std::time::Instant;
+
+    use windows::core::{w, BSTR, GUID, PCWSTR};
     use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
     use windows::Win32::Media::Audio::{eConsole, eRender, IMMDeviceEnumerator};
-    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED};
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoSetProxyBlanket, CLSCTX_ALL, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
+        EOAC_NONE, RPC_C_AUTHN_LEVEL_CALL, RPC_C_IMP_LEVEL_IMPERSONATE,
+    };
     use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+    use windows::Win32::System::Variant::{VariantClear, VariantToUInt32, VARIANT};
+    use windows::Win32::System::Wmi::{
+        IEnumWbemClassObject, IWbemClassObject, IWbemContext, IWbemLocator, IWbemServices, WbemLocator,
+        WBEM_FLAG_FORWARD_ONLY, WBEM_FLAG_RETURN_IMMEDIATELY, WBEM_INFINITE,
+    };
 
     /// Fast enough that pressing a volume key feels immediate; the reads are cheap COM gets.
     const POLL: Duration = Duration::from_millis(400);
+    /// After WMI failed, or answered that there's no built-in panel (a desktop), ask again this
+    /// rarely rather than every tick.
+    const BRIGHTNESS_RETRY: Duration = Duration::from_secs(30);
 
     struct Backend {
         endpoint: Option<IAudioEndpointVolume>,
+        brightness: Brightness,
     }
 
     impl Backend {
@@ -72,7 +84,7 @@ mod platform {
             // This thread lives as long as the app, so the apartment never needs tearing down.
             // Without it, volume (and a device that appears later) is simply unavailable.
             let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
-            Self { endpoint: default_endpoint() }
+            Self { endpoint: default_endpoint(), brightness: Brightness::default() }
         }
 
         fn read(&mut self) -> SystemState {
@@ -82,7 +94,7 @@ mod platform {
             }
             SystemState {
                 volume: self.endpoint.as_ref().and_then(volume).unwrap_or_default(),
-                brightness: brightness(),
+                brightness: self.brightness.read(),
                 battery: battery(),
             }
         }
@@ -108,17 +120,95 @@ mod platform {
         }
     }
 
-    /// Only built-in panels answer; external monitors report nothing (hence `supported: false`).
-    fn brightness() -> BrightnessState {
-        unsafe {
-            let monitor = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
-            let (mut min, mut current, mut max) = (0u32, 0u32, 0u32);
-            if GetMonitorBrightness(HANDLE(monitor.0), &mut min, &mut current, &mut max) != 0 && max > min {
-                let level = (current.saturating_sub(min)) as f64 / (max - min) as f64 * 100.0;
-                return BrightnessState { level: level.round().clamp(0.0, 100.0) as u8, supported: true };
+    /// The built-in panel's brightness through WMI (`root\WMI`, `WmiMonitorBrightness`), the same
+    /// level Windows' own brightness slider shows. Only laptop and tablet panels have it: a
+    /// desktop's monitors answer with no instances, which is `supported: false`. (External
+    /// monitors could be asked over DDC/CI, but each read takes tens of milliseconds on the
+    /// monitor's bus, and Windows doesn't show its own pop-up for them anyway.)
+    #[derive(Default)]
+    struct Brightness {
+        services: Option<IWbemServices>,
+        /// Don't ask before this: WMI failed, or there's no panel to ask about.
+        wait_until: Option<Instant>,
+    }
+
+    impl Brightness {
+        fn read(&mut self) -> BrightnessState {
+            if self.wait_until.is_some_and(|t| Instant::now() < t) {
+                return BrightnessState::default();
+            }
+            self.wait_until = None;
+            if self.services.is_none() {
+                self.services = connect_wmi();
+            }
+            let Some(services) = &self.services else {
+                self.wait_until = Some(Instant::now() + BRIGHTNESS_RETRY);
+                return BrightnessState::default();
+            };
+            match current_brightness(services) {
+                Ok(Some(level)) => BrightnessState { level: level.min(100) as u8, supported: true },
+                Ok(None) => {
+                    self.wait_until = Some(Instant::now() + BRIGHTNESS_RETRY);
+                    BrightnessState::default()
+                }
+                Err(e) => {
+                    eprintln!("hoverpill: reading screen brightness failed: {e}");
+                    // The WMI service may have restarted: connect afresh next time.
+                    self.services = None;
+                    self.wait_until = Some(Instant::now() + BRIGHTNESS_RETRY);
+                    BrightnessState::default()
+                }
             }
         }
-        BrightnessState::default()
+    }
+
+    fn connect_wmi() -> Option<IWbemServices> {
+        unsafe {
+            let locator: IWbemLocator = CoCreateInstance(&WbemLocator, None::<&windows::core::IUnknown>, CLSCTX_INPROC_SERVER).ok()?;
+            let empty = BSTR::new();
+            let services = locator
+                .ConnectServer(&BSTR::from("ROOT\\WMI"), &empty, &empty, &empty, 0, &empty, None::<&IWbemContext>)
+                .ok()?;
+            // Calls on the proxy run as this user. The process-wide `CoInitializeSecurity` isn't
+            // ours to call (the webview owns COM in this process), so set it on the proxy.
+            // 10 = RPC_C_AUTHN_WINNT, 0 = RPC_C_AUTHZ_NONE.
+            CoSetProxyBlanket(
+                &services,
+                10,
+                0,
+                PCWSTR::null(),
+                RPC_C_AUTHN_LEVEL_CALL,
+                RPC_C_IMP_LEVEL_IMPERSONATE,
+                None,
+                EOAC_NONE,
+            )
+            .ok()?;
+            Some(services)
+        }
+    }
+
+    /// The first active panel's level, 0–100, or `None` when there's no panel.
+    fn current_brightness(services: &IWbemServices) -> windows::core::Result<Option<u32>> {
+        unsafe {
+            let rows: IEnumWbemClassObject = services.ExecQuery(
+                &BSTR::from("WQL"),
+                &BSTR::from("SELECT CurrentBrightness FROM WmiMonitorBrightness WHERE Active = TRUE"),
+                WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY,
+                None::<&IWbemContext>,
+            )?;
+            let mut row: [Option<IWbemClassObject>; 1] = [None];
+            let mut returned = 0u32;
+            // S_FALSE with nothing returned is "no rows", not an error.
+            rows.Next(WBEM_INFINITE, &mut row, &mut returned).ok()?;
+            let Some(row) = row[0].take().filter(|_| returned == 1) else {
+                return Ok(None);
+            };
+            let mut value = VARIANT::default();
+            row.Get(w!("CurrentBrightness"), 0, &mut value, None, None)?;
+            let level = VariantToUInt32(&value);
+            let _ = VariantClear(&mut value);
+            Ok(Some(level?))
+        }
     }
 
     fn battery() -> BatteryState {
