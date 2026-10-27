@@ -1,6 +1,6 @@
 [package]
 name = "hoverpill"
-version = "0.4.0"
+version = "0.4.1"
 description = "A Dynamic Island-style smart notch for Windows and Linux"
 edition = "2021"
 
