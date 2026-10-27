@@ -31,6 +31,8 @@ export type PillEvents = {
   "pill:peek": boolean;
   /** A fullscreen app covers the notch's monitor. */
   "pill:fullscreen": boolean;
+  /** Typing in the notch ended because another app came to the front (Windows). */
+  "pill:typing": boolean;
   /** The ChatGPT shortcut was pressed: show the ChatGPT tab, ready to type. */
   "pill:ask": null;
   /** Ctrl is held over the closed notch: it will take a click, to be dragged. */
@@ -242,6 +244,16 @@ export async function notifyingApps(): Promise<string[]> {
 
 export async function mediaPlayers(): Promise<PlayerInfo[]> {
   return inTauri ? invoke<PlayerInfo[]>("media_players") : [{ id: "Spotify.exe", label: "Spotify" }, { id: "chrome", label: "Chrome" }];
+}
+
+/** Whether Claude Code's permission requests come to the notch (its hook is installed). */
+export async function claudeHookInstalled(): Promise<boolean> {
+  return inTauri ? invoke<boolean>("claude_hook_installed") : false;
+}
+
+/** Installs or removes the hook; resolves to whether it's installed. Rejects with a readable message. */
+export async function setClaudeHook(installed: boolean): Promise<boolean> {
+  return inTauri ? invoke<boolean>("set_claude_hook", { installed }) : installed;
 }
 
 export async function getAutostart(): Promise<boolean> {

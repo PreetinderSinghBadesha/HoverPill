@@ -6,7 +6,7 @@ import { formatCountdown, formatElapsed, stopwatchElapsed, timerLeft, useTimers 
 import { useLiveSettings } from "../lib/useSettings";
 import { useArtworkColor } from "../lib/useArtworkColor";
 import { useAccounts, useChat } from "../lib/useAccounts";
-import type { Layout, View } from "../lib/types";
+import { IS_LINUX, type Layout, type View } from "../lib/types";
 import { AlarmView, BubbleView, ExpandedView, IdleView, MediaCompactView, NotificationView, PermissionView, TimerCompactView } from "./views";
 
 /**
@@ -179,18 +179,18 @@ export function Pill() {
     };
   }, [scale, topOffset, interactive, free, known === null, x, y]);
 
-  // Opened by the ChatGPT shortcut, it has the keyboard until Esc or a click elsewhere. The
-  // question box hands it back itself when it loses focus; this covers the tab without one
-  // (signed out).
+  // Opened by the ChatGPT shortcut, it has the keyboard until Esc or a click elsewhere. On
+  // Windows Rust notices the click elsewhere (another app comes to the front); on Linux the
+  // window losing focus is the sign.
   useEffect(() => {
     if (!state.asked) return;
     const release = () => notchTyping(false);
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && release();
-    window.addEventListener("blur", release);
     window.addEventListener("keydown", onKey);
+    if (IS_LINUX) window.addEventListener("blur", release);
     return () => {
-      window.removeEventListener("blur", release);
       window.removeEventListener("keydown", onKey);
+      window.removeEventListener("blur", release);
     };
   }, [state.asked]);
 

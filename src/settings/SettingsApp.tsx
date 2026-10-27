@@ -1,9 +1,19 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import { getAutostart, inTauri, listMonitors, mediaPlayers, notifyingApps, recentNotificationApps, setAutostart } from "../lib/bridge";
+import {
+  claudeHookInstalled,
+  getAutostart,
+  inTauri,
+  listMonitors,
+  mediaPlayers,
+  notifyingApps,
+  recentNotificationApps,
+  setAutostart,
+  setClaudeHook,
+} from "../lib/bridge";
 import { useEditableSettings } from "../lib/useSettings";
 import { DEFAULT_SETTINGS, IS_LINUX, RANGES, type MonitorInfo, type PlayerInfo, type Settings } from "../lib/types";
-import { Section, SelectRow, SliderRow, SwitchRow, ToggleList } from "./controls";
+import { Row, Section, SelectRow, SliderRow, SwitchRow, ToggleList } from "./controls";
 import { AccountsTab } from "./AccountsTab";
 import mark from "../../assets/brand/hoverpill-icon.svg";
 
@@ -158,6 +168,7 @@ function GeneralTab() {
           onChange={toggle}
         />
       </Section>
+      <ClaudeSection />
       <Section title="About">
         <div className="about">
           <p>
@@ -167,6 +178,38 @@ function GeneralTab() {
         </div>
       </Section>
     </>
+  );
+}
+
+/** Claude Code's permission requests: in the notch (the hook is installed) or in the terminal. */
+function ClaudeSection() {
+  const [installed, setInstalled] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    claudeHookInstalled().then(setInstalled, console.error);
+  }, []);
+
+  const change = (on: boolean) => {
+    setError(null);
+    setClaudeHook(on).then(setInstalled, (e) => setError(String(e)));
+  };
+
+  return (
+    <Section title="Claude Code">
+      <Row
+        title="Permission requests in the notch"
+        description={
+          error ??
+          (installed
+            ? "On. Claude Code asks here, with Approve, Deny and Always allow. Sessions started before this was turned on still ask in the terminal."
+            : "Off. Claude Code asks in the terminal. Turn this on to answer from the notch instead; new Claude Code sessions will use it.")
+        }
+      >
+        <button type="button" className="button" disabled={installed === null} onClick={() => change(!installed)}>
+          {installed ? "Turn off" : "Turn on"}
+        </button>
+      </Row>
+    </Section>
   );
 }
 

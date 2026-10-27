@@ -54,6 +54,8 @@ fn main() {
             events::pill_ready,
             events::copy_text,
             screen::capture_screen,
+            tray::claude_hook_installed,
+            tray::set_claude_hook,
             settings::get_settings,
             settings::open_settings,
             settings::set_settings,

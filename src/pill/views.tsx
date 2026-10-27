@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { captureScreen, connectChatGpt, notchTyping, openChatGptUsage, openLink } from "../lib/bridge";
+import { captureScreen, connectChatGpt, notchTyping, on, openChatGptUsage, openLink } from "../lib/bridge";
 import type { Chat } from "../lib/useAccounts";
 import type {
   AccountStatus,
@@ -486,10 +486,18 @@ function ChatPanel({ chat, onSettings, asked }: { chat: Chat; onSettings: () => 
   // Leaving the tab (or the notch folding up) gives the keyboard back.
   useEffect(() => () => notchTyping(false), []);
 
-  // Opened by the ChatGPT shortcut just now: straight into the question box.
+  // Opened by the ChatGPT shortcut just now: straight into the question box, keyboard and all.
+  // Claimed here rather than left to the box's focus event: when this panel is mounted twice
+  // (React does so in development), the cleanup above hands the keyboard back in between, and
+  // the box, already focused, doesn't fire focus again.
   useEffect(() => {
-    if (asked && Date.now() - asked < 2000) input.current?.focus();
+    if (!asked || Date.now() - asked >= 2000) return;
+    input.current?.focus();
+    notchTyping(true);
   }, [asked]);
+
+  // Another app came to the front, so typing here is over (Windows; see `typing_over` in notch.rs).
+  useEffect(() => on("pill:typing", (typing) => !typing && input.current?.blur()).off, []);
 
   const send = () => {
     if ((!draft.trim() && !shot) || busy) return;
@@ -598,7 +606,9 @@ function ChatPanel({ chat, onSettings, asked }: { chat: Chat; onSettings: () => 
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKey}
           onFocus={() => notchTyping(true)}
-          onBlur={() => notchTyping(false)}
+          // On Windows Rust ends typing when another app comes to the front: a blur here can be
+          // focus moving within the notch (letting go of Alt, for one), which mustn't close it.
+          onBlur={IS_LINUX ? () => notchTyping(false) : undefined}
         />
         {busy ? (
           <button type="button" className="round-button" aria-label="Stop the answer" title="Stop" onClick={chat.stop}>

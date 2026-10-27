@@ -109,6 +109,18 @@ fn write_settings(path: &Path, settings: &Value) -> Result<(), String> {
     fs::rename(&tmp, path).map_err(err)
 }
 
+/// Whether `settings` has our hook in some `PermissionRequest` matcher group.
+pub fn has_hook(settings: &Value) -> bool {
+    settings["hooks"]["PermissionRequest"]
+        .as_array()
+        .is_some_and(|groups| groups.iter().any(|g| g["hooks"].as_array().is_some_and(|hooks| hooks.iter().any(is_ours))))
+}
+
+/// Whether the hook is in Claude Code's settings file now. A missing or unreadable file means no.
+pub fn is_installed(path: &Path) -> bool {
+    read_settings(path).is_ok_and(|s| has_hook(&s))
+}
+
 pub fn install(path: &Path, token: &str) -> Result<(), String> {
     let settings = read_settings(path)?;
     shape_ok(&settings)?;
@@ -155,6 +167,14 @@ mod tests {
         let groups = out["hooks"]["PermissionRequest"].as_array().unwrap();
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[1]["hooks"][0]["headers"]["Authorization"], "Bearer new");
+    }
+
+    #[test]
+    fn knows_whether_the_hook_is_there() {
+        assert!(!has_hook(&existing()));
+        assert!(!has_hook(&json!({})));
+        assert!(has_hook(&with_hook(existing(), "tok")));
+        assert!(!has_hook(&without_hook(with_hook(existing(), "tok"))));
     }
 
     #[test]

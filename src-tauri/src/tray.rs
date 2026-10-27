@@ -62,6 +62,24 @@ fn claude_settings(app: &AppHandle) -> Option<PathBuf> {
     app.path().home_dir().ok().map(|home| home.join(".claude").join("settings.json"))
 }
 
+/// For Settings: whether Claude Code's requests come to the notch.
+#[tauri::command]
+pub fn claude_hook_installed(app: AppHandle) -> bool {
+    claude_settings(&app).is_some_and(|path| install::is_installed(&path))
+}
+
+/// For Settings: installs or removes the hook, and says whether it's installed afterwards.
+#[tauri::command]
+pub fn set_claude_hook(app: AppHandle, installed: bool) -> Result<bool, String> {
+    let path = claude_settings(&app).ok_or("Home directory not found.")?;
+    if installed {
+        install::install(&path, app.state::<Broker>().token())?;
+    } else {
+        install::uninstall(&path)?;
+    }
+    Ok(install::is_installed(&path))
+}
+
 fn install_hook(app: &AppHandle) {
     let Some(path) = claude_settings(app) else {
         return events::notify(app, "Couldn't install hook", "Home directory not found.");

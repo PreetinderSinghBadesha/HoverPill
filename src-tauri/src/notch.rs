@@ -875,6 +875,10 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
         // Just dropped under the pointer: don't open until the pointer has moved off it.
         let mut wait_for_leave = false;
         let mut was_dragging = false;
+        // Typing (Windows): when it started, and whether the notch has been the foreground window
+        // since. See `typing_over`.
+        #[cfg(windows)]
+        let mut typing_since: Option<(Instant, bool)> = None;
         // Linux: follow the reported notch box as the X input region; start fully click-through.
         #[cfg(target_os = "linux")]
         let mut last_region: Option<Rect> = None;
@@ -984,7 +988,15 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
             #[cfg(not(target_os = "linux"))]
             let hover_open = false;
 
-            let typing = win.state::<HitState>().typing.load(Ordering::Relaxed);
+            #[allow(unused_mut)]
+            let mut typing = win.state::<HitState>().typing.load(Ordering::Relaxed);
+            #[cfg(windows)]
+            if typing_over(&win, typing, &mut typing_since) {
+                typing = false;
+                win.state::<HitState>().typing.store(false, Ordering::Relaxed);
+                let _ = win.set_focusable(false);
+                let _ = win.emit("pill:typing", false);
+            }
             let pinned = win.state::<HitState>().pinned.load(Ordering::Relaxed);
             let want_open = if typing || pinned {
                 true
@@ -1088,6 +1100,32 @@ impl FocusGuard {
 impl FocusGuard {
     fn remember(&mut self, _win: &WebviewWindow) {}
     fn give_back_if_taken(&mut self, _win: &WebviewWindow) {}
+}
+
+/// Whether typing in the notch is over (Windows): another app came to the front, or the notch
+/// never managed to get the keyboard. Decided here rather than by the webview's focus events,
+/// because those fire for focus moving around *inside* the notch too: letting go of Alt after
+/// the ChatGPT shortcut, for one, moves focus to the window's menu handling, and the notch shut
+/// the moment it opened.
+#[cfg(windows)]
+fn typing_over(win: &WebviewWindow, typing: bool, since: &mut Option<(Instant, bool)>) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    if !typing {
+        *since = None;
+        return false;
+    }
+    let (started, had_focus) = since.get_or_insert((Instant::now(), false));
+    let front = unsafe { GetForegroundWindow() } as isize;
+    if front == native_handle(win) {
+        *had_focus = true;
+        return false;
+    }
+    // Moved on to another app, or the keyboard never came (Windows can refuse it).
+    let over = *had_focus || started.elapsed() > Duration::from_millis(1500);
+    if over {
+        *since = None;
+    }
+    over && front != 0
 }
 
 /// Whether Ctrl is held. Windows only: on Linux the notch's own input region already takes the
