@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useRef } from "react";
-import { calendarEvents, currentMedia, inTauri, on, pillReady } from "./bridge";
+import { calendarEvents, currentMedia, inTauri, notchTyping, on, pillReady } from "./bridge";
 import type { CalendarEvent, Decision, MediaState, NotificationItem, PastDecision, PermissionRequest, ReceivedNotification, Tab, UpdateOffer, View } from "./types";
 
 const HOVER_LEAVE_MS = 180;
@@ -34,11 +34,16 @@ type State = {
   pinned: boolean;
   /** A newer version, offered in a card until it's installed or put off. */
   update: UpdateOffer | null;
+  /** The pointer is on the notch itself rather than pushing against the top edge. */
+  onCard: boolean;
+  /** This opening came from reaching for the update card, so the card stays (see `pickView`). */
+  cardHeld: boolean;
 };
 
 type Action =
   | { type: "open"; value: boolean }
   | { type: "peek"; value: boolean }
+  | { type: "onCard"; value: boolean }
   | { type: "fullscreen"; value: boolean }
   | { type: "tab"; value: Tab }
   | { type: "media"; value: MediaState | null }
@@ -60,8 +65,13 @@ function withTab(state: State, tab: Tab): State {
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
+    case "onCard":
+      return { ...state, onCard: action.value };
     case "open":
-      if (!action.value) return { ...state, open: false, asked: 0 };
+      if (!action.value) return { ...state, open: false, asked: 0, cardHeld: false };
+      // Decided once, as it opens: the pointer came onto the update card to use its buttons. A push
+      // against the top edge, a shortcut or the lock opens the notch as usual instead.
+      if (!state.open && state.update && state.onCard && !state.asked) return { ...state, open: true, cardHeld: true };
       // Opening while cards are queued means "show me": jump to the list and drop the queue.
       // Not when the ChatGPT shortcut is what opened it.
       if (state.queue.length && !state.asked) return { ...withTab(state, "notifications"), open: true, queue: [] };
@@ -104,11 +114,17 @@ function reducer(state: State, action: Action): State {
     case "calendar":
       return { ...state, calendar: action.value };
     case "ask":
-      return { ...withTab(state, "chatgpt"), open: true, queue: [], asked: Date.now() };
-    case "summon": {
-      const opened = reducer(state, { type: "open", value: true });
-      return { ...opened, asked: Date.now() };
-    }
+      // The shortcut toggles: a second press puts it away. Only a notch the shortcut actually
+      // opened counts, though: Rust grabs the keyboard before the event arrives, and the grab
+      // can open the notch a tick earlier (a `pill:hover`), which must not look like a second
+      // press and close it again. It also keeps this working when the notch happens to be
+      // sitting on the ChatGPT tab already.
+      if (state.asked && state.open && state.tab === "chatgpt") return { ...state, open: false, asked: 0 };
+      return { ...withTab(state, "chatgpt"), open: true, queue: [], asked: Date.now(), cardHeld: false };
+    case "summon":
+      // Same toggle, but it keeps whichever section was open.
+      if (state.asked && state.open) return { ...state, open: false, asked: 0 };
+      return { ...reducer({ ...state, onCard: false }, { type: "open", value: true }), onCard: state.onCard, asked: Date.now() };
     case "pin":
       return { ...state, pinned: action.value };
     case "update":
@@ -141,17 +157,23 @@ const initial = (): State => ({
   asked: 0,
   pinned: false,
   update: null,
+  onCard: false,
+  cardHeld: false,
 });
 
 /**
- * Priority: things waiting on you (a Claude request, then a finished timer), then the open
- * notch, then a notification card, then what's playing, then a running timer or stopwatch.
+ * Priority: things waiting on you (a Claude request, then a finished timer or an update), then
+ * the open notch, then a notification card, then what's playing, then a running timer or
+ * stopwatch.
  */
 export function pickView(s: State, timers: { ringing: boolean; ticking: boolean }): View {
   if (s.permissions.length) return "permission";
   if (timers.ringing) return "alarm";
+  // Like the alarm card it has buttons, so it stays while you reach for Restart/Later (the open
+  // notch would otherwise replace it). Opened any other way, the notch opens as usual and the
+  // card comes back when it closes.
+  if (s.update && (!s.open || s.cardHeld)) return "update";
   if (s.open) return "expanded";
-  if (s.update) return "update";
   if (s.queue.length) return "notification";
   if (s.media) return "media";
   if (timers.ticking) return "timer";
@@ -178,6 +200,7 @@ export function usePillState(notificationMs: number) {
       on("pill:summon", () => dispatch({ type: "summon" })),
       on("pill:update", (value) => dispatch({ type: "update", value })),
       on("pill:peek", (value) => dispatch({ type: "peek", value })),
+      on("pill:on-card", (value) => dispatch({ type: "onCard", value })),
       on("pill:fullscreen", (value) => dispatch({ type: "fullscreen", value })),
       on("pill:media", (value) => dispatch({ type: "media", value })),
       on("pill:notification", (value) => dispatch({ type: "notify", value })),
@@ -203,6 +226,13 @@ export function usePillState(notificationMs: number) {
       // Not remembering the tab is harmless.
     }
   }, [state.tab]);
+
+  // A shortcut opens the notch by grabbing the keyboard in Rust, so it stays up with the
+  // pointer elsewhere. Closing it again with the same shortcut has to release that, or the
+  // hit-test loop keeps it open forever.
+  useEffect(() => {
+    if (!state.open) notchTyping(false);
+  }, [state.open]);
 
   // Each card drops down for `notificationMs`, then the next one (or the resting state) follows.
   const head = state.queue[0];

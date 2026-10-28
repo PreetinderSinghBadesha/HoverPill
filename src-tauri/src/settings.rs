@@ -267,12 +267,50 @@ pub fn set_monitor(app: &AppHandle, name: String) {
 
 pub const WINDOW_LABEL: &str = "settings";
 
+/// Bring the Settings window forward and give it the keyboard.
+///
+/// The pill deliberately never takes focus, so Mutter treats HoverPill as a background app and
+/// refuses a focus request with a zero timestamp (Tao's). Asking with a timestamp read from the
+/// X server is accepted; XWayland also lets us hand the keyboard over directly, the same trick
+/// the notch uses when its question box is clicked. Only done in response to a click on the
+/// gear, the tray or a second launch, so it can't pull focus away from what someone is doing.
+fn focus(win: &tauri::WebviewWindow) {
+    let _ = win.unminimize();
+    let _ = win.show();
+    let _ = win.set_focus();
+    #[cfg(target_os = "linux")]
+    {
+        let win = win.clone();
+        let _ = win.clone().run_on_main_thread(move || {
+            use gdkx11::glib::translate::ToGlibPtr;
+            use gtk::prelude::*;
+            let Ok(gtk_win) = win.gtk_window() else { return };
+            let Some(gdk_win) = gtk_win.window() else { return };
+            // Native Wayland has no X window to focus; the Linux preflight settles on X11.
+            let Ok(x11_win) = gdk_win.downcast::<gdkx11::X11Window>() else { return };
+            // SAFETY: the window is alive on this thread; the call only reads a server timestamp.
+            let timestamp = unsafe { gdkx11::ffi::gdk_x11_get_server_time(x11_win.to_glib_none().0) };
+            gtk_win.present_with_time(timestamp);
+            let xid: x11_dl::xlib::Window = x11_win.xid();
+            let Ok(xlib) = x11_dl::xlib::Xlib::open() else { return };
+            // SAFETY: a short-lived connection of our own; `XCloseDisplay` flushes the requests.
+            unsafe {
+                let display = (xlib.XOpenDisplay)(std::ptr::null());
+                if display.is_null() {
+                    return;
+                }
+                (xlib.XRaiseWindow)(display, xid);
+                (xlib.XSetInputFocus)(display, xid, x11_dl::xlib::RevertToParent, x11_dl::xlib::CurrentTime);
+                (xlib.XCloseDisplay)(display);
+            }
+        });
+    }
+}
+
 /// Opens the Settings window, or brings it forward if it's already open.
 pub fn open_window(app: &AppHandle) {
     if let Some(win) = app.get_webview_window(WINDOW_LABEL) {
-        let _ = win.unminimize();
-        let _ = win.show();
-        let _ = win.set_focus();
+        focus(&win);
         return;
     }
     // Built off the event-loop thread: creating a WebView2 window from inside a menu/IPC
@@ -285,8 +323,11 @@ pub fn open_window(app: &AppHandle) {
             .min_inner_size(600.0, 440.0)
             .center()
             .build();
-        if let Err(e) = built {
-            crate::events::notify(&app, "Couldn't open Settings", &e.to_string());
+        match built {
+            Ok(win) => focus(&win),
+            Err(e) => {
+                crate::events::notify(&app, "Couldn't open Settings", &e.to_string());
+            }
         }
     });
 }

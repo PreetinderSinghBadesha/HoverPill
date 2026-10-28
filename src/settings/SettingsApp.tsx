@@ -191,7 +191,15 @@ function UpdatesSection({ settings, update }: { settings: Settings; update: Upda
     setBusy(true);
     setStatus("Checking…");
     checkForUpdates()
-      .then((v) => setStatus(v ? `HoverPill ${v} is ready: restart from the card in the notch.` : "You have the latest version."))
+      .then((v) =>
+        setStatus(
+          v
+            ? v.mode === "restart"
+              ? `HoverPill ${v.version} is ready: restart from the card in the notch.`
+              : `HoverPill ${v.version} is out: download it from the card in the notch.`
+            : "You have the latest version.",
+        ),
+      )
       .catch((e) => setStatus(`Couldn't check: ${e}`))
       .finally(() => setBusy(false));
   };

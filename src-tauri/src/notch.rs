@@ -84,6 +84,10 @@ pub struct HitState {
     shape: Mutex<Option<(Rect, bool)>>,
     /// Someone is typing in the notch (asking ChatGPT): it keeps the keyboard and stays open.
     typing: AtomicBool,
+    /// Linux: the X window that had the keyboard before `grab_keyboard` took it, so it can be
+    /// handed back when typing ends.
+    #[cfg(target_os = "linux")]
+    previous_focus: Mutex<Option<u64>>,
     /// Locked open with the lock button: it stays open, wherever the pointer goes, until unlocked.
     pinned: AtomicBool,
 }
@@ -103,9 +107,20 @@ pub fn notch_typing(active: bool, app: AppHandle, state: State<HitState>) {
     if let Some(win) = app.get_webview_window(LABEL) {
         let _ = win.set_focusable(active);
         if active {
+            // On Linux, asking the window manager (tao's `set_focus`, a zero-timestamp
+            // `present`) is refused as focus stealing, and the refusal itself puts the
+            // keyboard back on the window that had it a moment later. Hand the keyboard over
+            // directly, then ask the window manager properly so it keeps it there.
+            #[cfg(not(target_os = "linux"))]
             let _ = win.set_focus();
             #[cfg(target_os = "linux")]
-            grab_keyboard(&win);
+            {
+                grab_keyboard(&win);
+                activate(&win);
+            }
+        } else {
+            #[cfg(target_os = "linux")]
+            restore_keyboard(&win);
         }
     }
 }
@@ -117,9 +132,10 @@ pub fn notch_typing(active: bool, app: AppHandle, state: State<HitState>) {
 /// window manager has already refused to focus us by the time the text box sees the click.
 /// Lifting the hint and asking again doesn't help either - tao asks with a zero timestamp, which
 /// is refused as focus stealing, and the window manager ignores the changed hint for the focus
-/// decision. So once the text box takes focus, ask the X server for the keyboard directly;
-/// XWayland passes that on to the compositor. Only ever called while typing: the rest of the
-/// time the notch must not be focusable.
+/// decision. So once the text box takes focus, hand the keyboard to the X server directly
+/// (XWayland passes that on to the compositor); `activate` then asks the window manager with a
+/// real timestamp so it keeps it there. Only ever called while typing: the rest of the time the
+/// notch must not be focusable.
 #[cfg(target_os = "linux")]
 fn grab_keyboard(win: &WebviewWindow) {
     use x11_dl::xlib::{CurrentTime, RevertToParent, Window, Xlib};
@@ -135,13 +151,109 @@ fn grab_keyboard(win: &WebviewWindow) {
         let Ok(x11_win) = gdk_win.downcast::<gdkx11::X11Window>() else { return };
         let xid: Window = x11_win.xid();
         let Ok(xlib) = Xlib::open() else { return };
+        // SAFETY: a short-lived connection of our own; `XCloseDisplay` flushes the requests.
+        unsafe {
+            let display = (xlib.XOpenDisplay)(std::ptr::null());
+            if display.is_null() {
+                return;
+            }
+            // Remember who had it, unless that is already us: restoring our own window would
+            // leave the keyboard nowhere when the notch closes. The focused window can be a
+            // child of the pill's (the webview's), so walk up rather than compare ids.
+            let mut previous: Window = 0;
+            let mut revert: i32 = 0;
+            (xlib.XGetInputFocus)(display, &mut previous, &mut revert);
+            if previous > 1 && !is_within(&xlib, display, previous, xid) {
+                *win.state::<HitState>().previous_focus.lock().unwrap() = Some(previous as u64);
+            }
+            (xlib.XSetInputFocus)(display, xid, RevertToParent, CurrentTime);
+            (xlib.XCloseDisplay)(display);
+        }
+    });
+}
+
+/// Whether `window` is `ancestor` or sits inside it. X input focus can be on one of the
+/// webview's child windows rather than the toplevel, so an id comparison is not enough.
+#[cfg(target_os = "linux")]
+unsafe fn is_within(xlib: &x11_dl::xlib::Xlib, display: *mut x11_dl::xlib::Display, mut window: x11_dl::xlib::Window, ancestor: x11_dl::xlib::Window) -> bool {
+    use x11_dl::xlib::Window;
+
+    for _ in 0..32 {
+        if window == ancestor {
+            return true;
+        }
+        if window <= 1 {
+            return false;
+        }
+        let mut root: Window = 0;
+        let mut parent: Window = 0;
+        let mut children: *mut Window = std::ptr::null_mut();
+        let mut count: u32 = 0;
+        if (xlib.XQueryTree)(display, window, &mut root, &mut parent, &mut children, &mut count) == 0 {
+            return false;
+        }
+        if !children.is_null() {
+            (xlib.XFree)(children.cast());
+        }
+        if parent == 0 || parent == root {
+            return false;
+        }
+        window = parent;
+    }
+    false
+}
+
+/// Asks the window manager to make the notch the active window, with a real timestamp.
+///
+/// `tao`'s `set_focus` presents with `GDK_CURRENT_TIME`, which Mutter reads as focus stealing
+/// and refuses, leaving the keyboard with whatever app was in front. A timestamp read from the
+/// X server is accepted, so the shortcut-opened notch really is focused and can be typed into,
+/// and the X focus from `grab_keyboard` is not handed back a moment later.
+#[cfg(target_os = "linux")]
+fn activate(win: &WebviewWindow) {
+    let win = win.clone();
+    let handle = win.clone();
+    let _ = handle.run_on_main_thread(move || {
+        use gdkx11::glib::translate::ToGlibPtr;
+        use gtk::prelude::*;
+        let Ok(gtk_win) = win.gtk_window() else { return };
+        let Some(gdk_win) = gtk_win.window() else { return };
+        let Ok(x11_win) = gdk_win.downcast::<gdkx11::X11Window>() else { return };
+        // SAFETY: the window is alive on this thread; the call only reads a server timestamp.
+        let timestamp = unsafe { gdkx11::ffi::gdk_x11_get_server_time(x11_win.to_glib_none().0) };
+        gtk_win.present_with_time(timestamp);
+    });
+}
+
+/// Hands the keyboard back after typing (the notch closing, Esc, or another app taking it).
+#[cfg(target_os = "linux")]
+fn restore_keyboard(win: &WebviewWindow) {
+    use x11_dl::xlib::{CurrentTime, RevertToParent, Window, Xlib};
+
+    let win = win.clone();
+    let handle = win.clone();
+    let _ = handle.run_on_main_thread(move || {
+        use gtk::prelude::*;
+        let Some(previous) = win.state::<HitState>().previous_focus.lock().unwrap().take() else { return };
+        let Ok(gtk_win) = win.gtk_window() else { return };
+        let Some(gdk_win) = gtk_win.window() else { return };
+        let Ok(x11_win) = gdk_win.downcast::<gdkx11::X11Window>() else { return };
+        let Ok(xlib) = Xlib::open() else { return };
         // SAFETY: a short-lived connection of our own; `XCloseDisplay` flushes the request.
         unsafe {
             let display = (xlib.XOpenDisplay)(std::ptr::null());
             if display.is_null() {
                 return;
             }
-            (xlib.XSetInputFocus)(display, xid, RevertToParent, CurrentTime);
+            // Only if we still have it: clicking another window already gave it away, and
+            // pulling it back here would steal focus from where the click landed. The focus
+            // may be on a child of the pill's rather than the toplevel itself.
+            let mut current: Window = 0;
+            let mut revert: i32 = 0;
+            (xlib.XGetInputFocus)(display, &mut current, &mut revert);
+            if is_within(&xlib, display, current, x11_win.xid()) {
+                (xlib.XSetInputFocus)(display, previous as Window, RevertToParent, CurrentTime);
+            }
             (xlib.XCloseDisplay)(display);
         }
     });
@@ -281,9 +393,24 @@ pub fn monitor_bounds(win: &WebviewWindow) -> Result<(i32, i32, i32, i32), Strin
     target(win).map(|t| t.monitor).map_err(|e| e.to_string())
 }
 
+/// The union of every monitor: the whole desktop the compositor can show in a screenshot.
+pub fn desktop_bounds(win: &WebviewWindow) -> Result<(i32, i32, i32, i32), String> {
+    let monitors = win.available_monitors().map_err(|e| e.to_string())?;
+    let left = monitors.iter().map(|m| m.position().x).min().ok_or("no monitors")?;
+    let top = monitors.iter().map(|m| m.position().y).min().ok_or("no monitors")?;
+    let right = monitors.iter().map(|m| m.position().x + m.size().width as i32).max().ok_or("no monitors")?;
+    let bottom = monitors.iter().map(|m| m.position().y + m.size().height as i32).max().ok_or("no monitors")?;
+    Ok((left, top, right - left, bottom - top))
+}
+
+/// Set while the notch is parked off-screen for a screenshot, so `place` leaves it there.
+static PARKED_FOR_CAPTURE: AtomicBool = AtomicBool::new(false);
+
 /// Leaves the notch out of screen captures, or puts it back. Only while HoverPill takes its own
 /// screenshot for ChatGPT: other screenshots and recordings show the notch as usual. Windows
-/// only; on Linux there's no such switch, so an open notch appears in its own screenshots.
+/// hides the window from capture directly; on Linux the compositor has no such switch, and its
+/// portal screenshot ignores both `_NET_WM_WINDOW_OPACITY` and `set_opacity`, so the window is
+/// parked just past the edge of the desktop for the instant the shot is taken instead.
 pub fn exclude_from_capture(win: &WebviewWindow, exclude: bool) {
     #[cfg(windows)]
     {
@@ -301,7 +428,24 @@ pub fn exclude_from_capture(win: &WebviewWindow, exclude: bool) {
             std::thread::sleep(Duration::from_millis(80));
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        if exclude {
+            // Just past the right edge of every monitor, so it is off the composited screen
+            // without losing focus or its place in the dock. `place` is held off meanwhile.
+            if let Ok((dx, dy, dw, _dh)) = desktop_bounds(win) {
+                PARKED_FOR_CAPTURE.store(true, Ordering::Relaxed);
+                let _ = win.set_position(PhysicalPosition::new(dx + dw, dy));
+                // Let the move be applied (and the notch leave the frame) before the shot.
+                std::thread::sleep(Duration::from_millis(120));
+            }
+        } else {
+            PARKED_FOR_CAPTURE.store(false, Ordering::Relaxed);
+            let _ = place(win);
+            std::thread::sleep(Duration::from_millis(80));
+        }
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = (win, exclude);
     }
@@ -353,7 +497,7 @@ pub fn list_monitors(app: AppHandle) -> Result<Vec<MonitorInfo>, String> {
 /// call periodically (monitors get plugged in, resolution and DPI scale change). Leaves it alone
 /// while it's being dragged.
 pub fn place(win: &WebviewWindow) -> Result<(), Box<dyn Error>> {
-    if dragging(win) {
+    if dragging(win) || PARKED_FOR_CAPTURE.load(Ordering::Relaxed) {
         return Ok(());
     }
     let t = target(win)?;
@@ -368,6 +512,10 @@ fn move_to(win: &WebviewWindow, t: &Target) -> Result<(), Box<dyn Error>> {
         win.set_position(t.pos)?;
     }
     if win.inner_size()? != t.size {
+        // Linux: lift the fixed min == max hints a non-resizable GTK window carries before
+        // asking for a smaller size. Queued in this order, the event loop applies both.
+        #[cfg(target_os = "linux")]
+        win.set_resizable(true)?;
         win.set_size(t.size)?;
     }
     appbar::sync(native_handle(win), t.reserve);
@@ -442,11 +590,22 @@ pub fn end_drag(app: AppHandle) {
 /// Keeps the window where it was relative to the pointer when the drag began, so the bubble
 /// stays under it.
 fn follow_cursor(win: &WebviewWindow, drag: Drag) {
-    if let Ok(c) = win.cursor_position() {
+    if let Some(c) = pointer_position(win) {
         let x = drag.window.x + (c.x - drag.cursor.x).round() as i32;
         let y = drag.window.y + (c.y - drag.cursor.y).round() as i32;
         let _ = win.set_position(PhysicalPosition::new(x, y));
     }
+}
+
+/// The pointer's screen position. On Linux this asks the X root directly: `cursor_position()`
+/// goes through the same X server, but a root query also tells us the button state and keeps the
+/// drag loop independent of which window the pointer happens to be over.
+fn pointer_position(win: &WebviewWindow) -> Option<PhysicalPosition<f64>> {
+    #[cfg(target_os = "linux")]
+    if let Some((x, y, _)) = x11::pointer() {
+        return Some(PhysicalPosition::new(x, y));
+    }
+    win.cursor_position().ok()
 }
 
 fn finish_drag(win: &WebviewWindow) {
@@ -764,10 +923,34 @@ mod x11 {
         }
     }
 
+    /// The pointer on the X root, and whether the primary button is down, as XWayland last saw
+    /// them. Used while dragging by the hit-test thread, which owns this connection. X only
+    /// learns about the pointer while it is over an X surface, so the drag loop also widens the
+    /// pill's input region to its whole window (see the drag branch in `spawn_hit_test_loop`).
+    pub fn pointer() -> Option<(f64, f64, bool)> {
+        CONNECTION.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            if slot.is_none() {
+                *slot = Connection::open();
+            }
+            let conn = slot.as_ref()?;
+            // SAFETY: pointers are to locals or `conn.display`; Xlib only fills them in.
+            unsafe {
+                let root = (conn.xlib.XDefaultRootWindow)(conn.display);
+                let (mut root_return, mut child_return) = (0u64, 0u64);
+                let (mut root_x, mut root_y) = (0i32, 0i32);
+                let (mut win_x, mut win_y) = (0i32, 0i32);
+                let mut mask = 0u32;
+                let ok = (conn.xlib.XQueryPointer)(
+                    conn.display, root, &mut root_return, &mut child_return, &mut root_x, &mut root_y, &mut win_x, &mut win_y, &mut mask,
+                );
+                (ok != 0).then_some((root_x as f64, root_y as f64, mask & x11_dl::xlib::Button1Mask != 0))
+            }
+        })
+    }
+
     /// `true` when a window marked fullscreen covers `pill`, the pill window's own box on the X
-    /// root.
-    ///
-    /// Reading just `_NET_ACTIVE_WINDOW` isn't enough: some window managers (Ubuntu's split shell,
+    /// root. Reading just `_NET_ACTIVE_WINDOW` isn't enough: some window managers (Ubuntu's split shell,
     /// for one) leave it pointing at a dead helper window while an app is fullscreen, and the
     /// fullscreen app need not be the focused one. So walk `_NET_CLIENT_LIST` and accept any
     /// window that is flagged fullscreen, isn't hidden on another workspace, and reaches over the
@@ -869,12 +1052,20 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
         let mut display = Display::default();
         let mut fullscreen = false;
         let mut peek = false;
+        let mut on_card = false;
         let mut focus = FocusGuard::default();
         // Ctrl is held over the closed notch, so it takes the click (see `pill:grab`).
         let mut grab = false;
         // Just dropped under the pointer: don't open until the pointer has moved off it.
         let mut wait_for_leave = false;
         let mut was_dragging = false;
+        // Linux: when the current drag started, so a stale button reading can't end it
+        // immediately (XWayland can lose the pointerup while the window moves under it).
+        #[cfg(target_os = "linux")]
+        let mut drag_since: Option<Instant> = None;
+        // Linux: the whole window has been made input-opaque for the duration of a drag.
+        #[cfg(target_os = "linux")]
+        let mut drag_region_full = false;
         // Typing (Windows): when it started, and whether the notch has been the foreground window
         // since. See `typing_over`.
         #[cfg(windows)]
@@ -891,10 +1082,21 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
             // Dragging: the window follows the pointer and nothing else happens meanwhile.
             let drag = *win.state::<DragState>().0.lock().unwrap();
             if let Some(drag) = drag {
+                #[cfg(target_os = "linux")]
+                let started = *drag_since.get_or_insert_with(Instant::now);
                 std::thread::sleep(DRAG_POLL);
                 if open {
                     open = false;
                     let _ = win.emit("pill:hover", false);
+                }
+                // XWayland stops updating the X pointer while it is over a native Wayland
+                // window, so keep the whole (window-sized) pill under the pointer while it
+                // moves: the bubble is small, and the old notch-sized input region was easy to
+                // leave behind, which stranded the drag with no pointerup.
+                #[cfg(target_os = "linux")]
+                if !drag_region_full {
+                    drag_region_full = true;
+                    set_input_region(&win, Some(Rect { x: 0.0, y: 0.0, width: 100_000.0, height: 100_000.0 }));
                 }
                 follow_cursor(&win, drag);
                 #[cfg(not(target_os = "linux"))]
@@ -903,19 +1105,33 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
                     let _ = win.set_ignore_cursor_events(false);
                 }
                 // The webview's pointerup can go missing while the window moves under it; the
-                // button itself has the final word.
+                // button itself has the final word. Give X a moment to see the press first.
                 #[cfg(windows)]
                 if !primary_button_down() {
                     finish_drag(&win);
                 }
+                #[cfg(target_os = "linux")]
+                if started.elapsed() > Duration::from_millis(150) && !primary_button_down() {
+                    finish_drag(&win);
+                }
                 was_dragging = true;
                 continue;
+            }
+            #[cfg(target_os = "linux")]
+            {
+                drag_since = None;
             }
             // Dropped (here or by the webview's `end_drag`): it has moved, and it's under the pointer.
             if was_dragging {
                 was_dragging = false;
                 geo = Geometry::read(&win);
                 wait_for_leave = true;
+                // Back to shaping only the notch, and let the next tick re-apply the reported box.
+                #[cfg(target_os = "linux")]
+                {
+                    drag_region_full = false;
+                    last_region = None;
+                }
             }
 
             let tick = ticks;
@@ -998,6 +1214,13 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
                 let _ = win.emit("pill:typing", false);
             }
             let pinned = win.state::<HitState>().pinned.load(Ordering::Relaxed);
+            // On the notch itself rather than pushing against the top edge: reaching for a card's
+            // buttons. Sent before `pill:hover`, so the webview knows why it's opening.
+            let want_on_card = p.over && !p.at_edge;
+            if want_on_card != on_card {
+                on_card = want_on_card;
+                let _ = win.emit("pill:on-card", on_card);
+            }
             let want_open = if typing || pinned {
                 true
             } else if p.interactive {
@@ -1149,6 +1372,13 @@ fn primary_button_down() -> bool {
     use windows_sys::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_SWAPBUTTON};
     let button = if unsafe { GetSystemMetrics(SM_SWAPBUTTON) } != 0 { VK_RBUTTON } else { VK_LBUTTON };
     unsafe { GetAsyncKeyState(button as i32) as u16 & 0x8000 != 0 }
+}
+
+/// Linux: the X server's button mask. Only meaningful while the pointer is over an X surface;
+/// the drag loop keeps the pill's whole window input-opaque for exactly that reason.
+#[cfg(target_os = "linux")]
+fn primary_button_down() -> bool {
+    x11::pointer().is_some_and(|(_, _, down)| down)
 }
 
 /// Other "topmost" windows (borderless-fullscreen video players, the taskbar after it's clicked)

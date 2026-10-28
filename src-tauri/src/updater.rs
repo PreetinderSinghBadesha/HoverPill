@@ -55,25 +55,26 @@ pub fn spawn(app: AppHandle) {
 }
 
 /// Looks for a newer release; if there is one, gets it ready and offers it in the notch.
-/// Returns the newer version, if any.
-async fn check(app: &AppHandle) -> Result<Option<String>, String> {
+async fn check(app: &AppHandle) -> Result<Option<Offer>, String> {
     if let Some((update, _)) = app.state::<Pending>().0.lock().unwrap().as_ref() {
-        let version = update.version.clone();
-        events::send(app, "pill:update", Offer { version: version.clone(), mode: "restart" });
-        return Ok(Some(version));
+        let offer = Offer { version: update.version.clone(), mode: "restart" };
+        events::send(app, "pill:update", offer.clone());
+        return Ok(Some(offer));
     }
     let Some(update) = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())? else {
         return Ok(None);
     };
     let version = update.version.clone();
     if !can_replace_itself() {
-        events::send(app, "pill:update", Offer { version: version.clone(), mode: "download" });
-        return Ok(Some(version));
+        let offer = Offer { version, mode: "download" };
+        events::send(app, "pill:update", offer.clone());
+        return Ok(Some(offer));
     }
     let bytes = update.download(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
     *app.state::<Pending>().0.lock().unwrap() = Some((update, bytes));
-    events::send(app, "pill:update", Offer { version: version.clone(), mode: "restart" });
-    Ok(Some(version))
+    let offer = Offer { version, mode: "restart" };
+    events::send(app, "pill:update", offer.clone());
+    Ok(Some(offer))
 }
 
 /// "Check for updates" in the tray: like the automatic check, but says so when there's nothing new.
@@ -88,9 +89,9 @@ pub fn check_by_hand(app: &AppHandle) {
     });
 }
 
-/// For Settings: checks now; the newer version, or nothing if this is the latest.
+/// For Settings: checks now and says what to do with it, or nothing if this is the latest.
 #[tauri::command]
-pub async fn check_for_updates(app: AppHandle) -> Result<Option<String>, String> {
+pub async fn check_for_updates(app: AppHandle) -> Result<Option<Offer>, String> {
     check(&app).await
 }
 

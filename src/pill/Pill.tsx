@@ -21,7 +21,7 @@ import { useLiveSettings } from "../lib/useSettings";
 import { useArtworkColor } from "../lib/useArtworkColor";
 import { useAccounts, useChat } from "../lib/useAccounts";
 import { IS_LINUX, type Layout, type View } from "../lib/types";
-import { AlarmView, BubbleView, ExpandedView, IdleView, MediaCompactView, NotificationView, PermissionView, TimerCompactView, UpdateView } from "./views";
+import { AlarmView, BubbleView, ExpandedView, IdleView, MediaCompactView, NotificationView, PermissionView, TimerCompactView, UpdateView, releaseTypingAfterBlur } from "./views";
 
 /**
  * Target size per view, in CSS px. The window is fixed (see notch.rs); only the notch morphs.
@@ -200,13 +200,13 @@ export function Pill() {
   // window losing focus is the sign.
   useEffect(() => {
     if (!state.asked) return;
-    const release = () => notchTyping(false);
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && release();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && notchTyping(false);
+    const onBlur = () => releaseTypingAfterBlur();
     window.addEventListener("keydown", onKey);
-    if (IS_LINUX) window.addEventListener("blur", release);
+    if (IS_LINUX) window.addEventListener("blur", onBlur);
     return () => {
       window.removeEventListener("keydown", onKey);
-      window.removeEventListener("blur", release);
+      window.removeEventListener("blur", onBlur);
     };
   }, [state.asked]);
 

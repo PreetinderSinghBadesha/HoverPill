@@ -30,6 +30,8 @@ export type PillEvents = {
   "pill:hover": boolean;
   /** The pointer is over the closed notch: fade it so what's underneath shows. */
   "pill:peek": boolean;
+  /** The pointer is on the notch itself, not pushing against the top edge (see `pickView`). */
+  "pill:on-card": boolean;
   /** A fullscreen app covers the notch's monitor. */
   "pill:fullscreen": boolean;
   /** Typing in the notch ended because another app came to the front (Windows). */
@@ -117,9 +119,9 @@ export async function installUpdate(): Promise<void> {
   if (inTauri) await invoke("install_update");
 }
 
-/** Checks for a newer version now; resolves to it, or null if this is the latest. */
-export async function checkForUpdates(): Promise<string | null> {
-  return inTauri ? invoke<string | null>("check_for_updates") : null;
+/** Checks for a newer version now: what to do about it, or null if this is the latest. */
+export async function checkForUpdates(): Promise<UpdateOffer | null> {
+  return inTauri ? invoke<UpdateOffer | null>("check_for_updates") : null;
 }
 
 export function openSettings() {
