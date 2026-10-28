@@ -4,7 +4,10 @@
 //!
 //! Windows captures the monitor directly with `xcap`; Linux asks the desktop's Screenshot portal
 //! (works on Wayland as well as X11, and every GNOME/KDE/wlroots desktop ships one), then crops
-//! the shot to the notch's monitor.
+//! the shot to the notch's monitor. GNOME only grants a silent screenshot after asking "Allow
+//! HoverPill to take screenshots?", and it only asks the app that has focus, which the notch never
+//! is; so when the silent shot is refused, the desktop's own screenshot screen is opened instead
+//! and you take the shot there.
 
 use std::io::Cursor;
 use std::sync::Mutex;
@@ -74,14 +77,22 @@ fn capture(monitor: (i32, i32, i32, i32), _desktop: (i32, i32, i32, i32)) -> Res
     encode(&shot)
 }
 
-/// Linux: the portal takes one picture of the whole desktop; cut out the notch's monitor.
+/// Linux: the portal takes one picture of the whole desktop; cut out the notch's monitor. If the
+/// desktop won't take one silently, its screenshot screen opens and whatever you capture there is
+/// used as it is.
 #[cfg(target_os = "linux")]
 fn capture(monitor: (i32, i32, i32, i32), desktop: (i32, i32, i32, i32)) -> Result<(String, String), String> {
-    let bytes = tauri::async_runtime::block_on(portal::screenshot())?;
-    let shot = image::load_from_memory(&bytes)
-        .map_err(|e| format!("couldn't read the screenshot: {e}"))?
-        .to_rgba8();
-    encode(&crop(&shot, monitor, desktop))
+    let read = |bytes: Vec<u8>| {
+        image::load_from_memory(&bytes).map(|i| i.to_rgba8()).map_err(|e| format!("couldn't read the screenshot: {e}"))
+    };
+    match tauri::async_runtime::block_on(portal::screenshot(false)) {
+        Ok(bytes) => encode(&crop(&read(bytes)?, monitor, desktop)),
+        Err(portal::Failure::Refused) => match tauri::async_runtime::block_on(portal::screenshot(true)) {
+            Ok(bytes) => encode(&read(bytes)?),
+            Err(e) => Err(e.to_string()),
+        },
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 #[cfg(not(any(windows, target_os = "linux")))]
@@ -127,26 +138,66 @@ fn jpeg_url(image: &RgbImage, quality: u8) -> Result<String, String> {
     Ok(format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes.into_inner())))
 }
 
-/// The desktop's `org.freedesktop.portal.Screenshot`: ask for a non-interactive shot, wait for
-/// the portal's `Response`, then read the file it wrote (and remove it, since the name is
-/// unique to this request).
+/// The desktop's `org.freedesktop.portal.Screenshot`: ask for a shot, wait for the portal's
+/// `Response`, then read the file it wrote (and remove it, since the name is unique to this
+/// request).
 #[cfg(target_os = "linux")]
 mod portal {
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::time::Duration;
 
+    use std::fmt;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
     use futures_util::StreamExt;
     use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
     use zbus::{Connection, MatchRule, MessageStream};
 
-    pub async fn screenshot() -> Result<Vec<u8>, String> {
+    /// A silent shot is quick; the screenshot screen waits for you.
+    const SILENT_TIMEOUT: Duration = Duration::from_secs(15);
+    const INTERACTIVE_TIMEOUT: Duration = Duration::from_secs(120);
+
+    #[derive(Debug)]
+    pub enum Failure {
+        /// The desktop said no (on GNOME: it couldn't ask, as the notch doesn't have focus).
+        Refused,
+        Other(String),
+    }
+
+    impl fmt::Display for Failure {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                Failure::Refused => f.write_str("the desktop refused the screenshot"),
+                Failure::Other(text) => f.write_str(text),
+            }
+        }
+    }
+
+    impl From<String> for Failure {
+        fn from(text: String) -> Self {
+            Failure::Other(text)
+        }
+    }
+
+    impl From<&str> for Failure {
+        fn from(text: &str) -> Self {
+            Failure::Other(text.to_string())
+        }
+    }
+
+    /// Each request needs its own token: the refused silent one and the interactive retry are
+    /// two requests from the same process.
+    static NEXT_TOKEN: AtomicU32 = AtomicU32::new(0);
+
+    /// `interactive` opens the desktop's screenshot screen instead of taking the shot silently.
+    pub async fn screenshot(interactive: bool) -> Result<Vec<u8>, Failure> {
         let conn = Connection::session().await.map_err(|e| format!("can't reach the desktop portal: {e}"))?;
         let sender = conn
             .unique_name()
             .map(|name| name.as_str().to_string())
             .ok_or("the session bus has no name for us")?;
-        let token = format!("hoverpill{}", std::process::id());
+        let token = format!("hoverpill{}_{}", std::process::id(), NEXT_TOKEN.fetch_add(1, Ordering::Relaxed));
 
         // Subscribe before asking: the portal may answer before the method call returns.
         let rule = MatchRule::builder()
@@ -160,7 +211,7 @@ mod portal {
 
         let mut options: HashMap<&str, Value<'_>> = HashMap::new();
         options.insert("handle_token", Value::from(token.as_str()));
-        options.insert("interactive", Value::from(false));
+        options.insert("interactive", Value::from(interactive));
         options.insert("modal", Value::from(false));
 
         let reply = conn
@@ -190,22 +241,19 @@ mod portal {
                 }
                 let (response, results): (u32, HashMap<String, OwnedValue>) =
                     message.body().deserialize().map_err(|e| e.to_string())?;
-                if response != 0 {
-                    return Err(if response == 1 {
-                        "the screenshot was cancelled".to_string()
-                    } else {
-                        "the desktop refused the screenshot".to_string()
-                    });
+                match response {
+                    0 => {}
+                    1 => return Err("the screenshot was cancelled".into()),
+                    _ => return Err(Failure::Refused),
                 }
                 let uri = results.get("uri").cloned().ok_or("the screenshot has no file")?;
                 let uri = String::try_from(uri).map_err(|e| e.to_string())?;
-                return read_and_remove(&uri);
+                return Ok(read_and_remove(&uri)?);
             }
-            Err("the desktop stopped answering".to_string())
+            Err("the desktop stopped answering".into())
         };
-        tokio::time::timeout(Duration::from_secs(15), wait)
-            .await
-            .map_err(|_| "the screenshot timed out".to_string())?
+        let limit = if interactive { INTERACTIVE_TIMEOUT } else { SILENT_TIMEOUT };
+        tokio::time::timeout(limit, wait).await.map_err(|_| Failure::from("the screenshot timed out"))?
     }
 
     fn read_and_remove(uri: &str) -> Result<Vec<u8>, String> {
@@ -319,7 +367,7 @@ mod tests {
     #[test]
     #[ignore]
     fn live_portal_screenshot() {
-        let bytes = tauri::async_runtime::block_on(portal::screenshot()).unwrap();
+        let bytes = tauri::async_runtime::block_on(portal::screenshot(false)).unwrap();
         let shot = image::load_from_memory(&bytes).unwrap().to_rgba8();
         assert!(shot.width() > 0 && shot.height() > 0);
     }
