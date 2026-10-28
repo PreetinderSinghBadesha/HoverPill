@@ -1052,6 +1052,7 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
         let mut display = Display::default();
         let mut fullscreen = false;
         let mut peek = false;
+        let mut on_card = false;
         let mut focus = FocusGuard::default();
         // Ctrl is held over the closed notch, so it takes the click (see `pill:grab`).
         let mut grab = false;
@@ -1213,6 +1214,13 @@ pub fn spawn_hit_test_loop(win: WebviewWindow) {
                 let _ = win.emit("pill:typing", false);
             }
             let pinned = win.state::<HitState>().pinned.load(Ordering::Relaxed);
+            // On the notch itself rather than pushing against the top edge: reaching for a card's
+            // buttons. Sent before `pill:hover`, so the webview knows why it's opening.
+            let want_on_card = p.over && !p.at_edge;
+            if want_on_card != on_card {
+                on_card = want_on_card;
+                let _ = win.emit("pill:on-card", on_card);
+            }
             let want_open = if typing || pinned {
                 true
             } else if p.interactive {

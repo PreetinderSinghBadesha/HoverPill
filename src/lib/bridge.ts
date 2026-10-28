@@ -30,6 +30,8 @@ export type PillEvents = {
   "pill:hover": boolean;
   /** The pointer is over the closed notch: fade it so what's underneath shows. */
   "pill:peek": boolean;
+  /** The pointer is on the notch itself, not pushing against the top edge (see `pickView`). */
+  "pill:on-card": boolean;
   /** A fullscreen app covers the notch's monitor. */
   "pill:fullscreen": boolean;
   /** Typing in the notch ended because another app came to the front (Windows). */
