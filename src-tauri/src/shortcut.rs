@@ -122,6 +122,16 @@ fn apply_plugin(app: &AppHandle, wanted: &[(&str, Action)]) {
     }
 }
 
+/// Takes HoverPill's GNOME custom shortcuts out again, on quit: they only work while it runs, and
+/// left behind they'd point at a binary that may be uninstalled (or an AppImage that moved).
+/// The next start installs them again.
+pub fn remove_desktop_shortcuts() {
+    #[cfg(target_os = "linux")]
+    if crate::shellext::gnome_session() {
+        gnome::clear();
+    }
+}
+
 /// Handles `--summon=open` / `--summon=ask`, passed by a GNOME custom keybinding to a second
 /// copy of HoverPill. Returns whether an argument matched (so the single-instance handover knows
 /// not to open Settings instead).
@@ -150,6 +160,8 @@ fn summon(app: &AppHandle, action: Action) {
 
 /// GNOME custom keybindings: the only way an unsandboxed app can have a global shortcut on
 /// GNOME Wayland. Each one runs `hoverpill --summon=...`, so the running copy opens the notch.
+/// They're only there while HoverPill runs: installed at start, removed on quit (see
+/// `remove_desktop_shortcuts`), so none stay behind pointing at a binary that's gone.
 #[cfg(target_os = "linux")]
 mod gnome {
     use std::path::PathBuf;
@@ -273,7 +285,8 @@ mod gnome {
     /// GNOME's own bindings and other apps' custom shortcuts. The desktop keeps a grab on those,
     /// so ours would never fire (and Settings would show a conflict); check before installing.
     fn taken(accel: &str) -> bool {
-        let needle = format!("'{accel}'");
+        let Some(wanted) = parse_accelerator(accel) else { return false };
+        let clashes = |out: &str| quoted(out).iter().any(|value| parse_accelerator(value).as_ref() == Some(&wanted));
         const SCHEMAS: [&str; 7] = [
             "org.gnome.desktop.wm.keybindings",
             "org.gnome.shell.keybindings",
@@ -283,19 +296,66 @@ mod gnome {
             "org.gnome.settings-daemon.plugins.power",
             "org.gnome.desktop.interface",
         ];
-        if SCHEMAS.iter().any(|schema| gsettings(&["list-recursively", schema]).is_some_and(|out| out.contains(&needle))) {
+        if SCHEMAS.iter().any(|schema| gsettings(&["list-recursively", schema]).is_some_and(|out| clashes(&out))) {
             return true;
         }
         let Some(current) = gsettings(&["get", SCHEMA, "custom-keybindings"]) else { return false };
         listed_paths(&current).into_iter().filter(|path| !ours(path)).any(|path| {
             let schema = format!("{CUSTOM}:{path}");
-            gsettings(&["get", &schema, "binding"]).is_some_and(|value| value.contains(&needle))
+            gsettings(&["get", &schema, "binding"]).is_some_and(|value| clashes(&value))
         })
     }
 
+    /// Modifier bits for `parse_accelerator`.
+    const CONTROL: u8 = 1;
+    const ALT: u8 = 2;
+    const SHIFT: u8 = 4;
+    const SUPER: u8 = 8;
+
+    /// An accelerator as its modifiers and key, so spellings GNOME treats as the same keys
+    /// compare equal: `<Control>`, `<Ctrl>`, `<Ctl>` and `<Primary>` are all Ctrl, `<Mod1>` is
+    /// Alt, `<Mod4>` is Super, and letters ignore case. `None` for anything that isn't one
+    /// (a font name in the same schema, say).
+    pub(super) fn parse_accelerator(text: &str) -> Option<(u8, String)> {
+        let mut rest = text.trim();
+        let mut modifiers = 0u8;
+        while let Some(after) = rest.strip_prefix('<') {
+            let (name, tail) = after.split_once('>')?;
+            modifiers |= match name.to_ascii_lowercase().as_str() {
+                "control" | "ctrl" | "ctl" | "primary" => CONTROL,
+                "alt" | "mod1" => ALT,
+                "shift" => SHIFT,
+                "super" | "mod4" => SUPER,
+                // `<Meta>`, `<Hyper>` and friends: keep them distinct from everything above.
+                _ => 16,
+            };
+            rest = tail;
+        }
+        if rest.is_empty() || rest.contains(char::is_whitespace) || rest.contains(['<', '>']) {
+            return None;
+        }
+        let key = if rest.chars().count() == 1 { rest.to_lowercase() } else { rest.to_string() };
+        Some((modifiers, key))
+    }
+
+    /// The single-quoted strings in `gsettings` output (`['<Super>Home', '<Alt>F1']`).
+    fn quoted(out: &str) -> Vec<String> {
+        out.split('\'').skip(1).step_by(2).map(str::to_string).collect()
+    }
+
     fn command(action: Action) -> Option<String> {
-        let exe: PathBuf = std::env::current_exe().ok()?;
-        Some(format!("\"{}\" --summon={}", exe.display(), action.arg()))
+        Some(format!("\"{}\" --summon={}", launcher()?.display(), action.arg()))
+    }
+
+    /// What a shortcut should run. Inside an AppImage, `current_exe()` is the temporary mount
+    /// (`/tmp/.mount_…/usr/bin/hoverpill`), which is gone once HoverPill restarts; the AppImage
+    /// itself is in `APPIMAGE`.
+    fn launcher() -> Option<PathBuf> {
+        launcher_from(std::env::var_os("APPIMAGE"), std::env::current_exe().ok())
+    }
+
+    pub(super) fn launcher_from(appimage: Option<std::ffi::OsString>, exe: Option<PathBuf>) -> Option<PathBuf> {
+        appimage.filter(|path| !path.is_empty()).map(PathBuf::from).or(exe)
     }
 
     /// Installs (or updates) the custom keybindings. `false` when `gsettings` isn't usable, so
@@ -375,7 +435,41 @@ mod gnome {
 
     #[cfg(test)]
     mod tests {
-        use super::{accelerator, list_literal, listed_paths, string_literal};
+        use std::path::PathBuf;
+
+        use super::{accelerator, launcher_from, list_literal, listed_paths, parse_accelerator, quoted, string_literal};
+
+        #[test]
+        fn shortcuts_run_the_appimage_not_its_mount() {
+            let mount = Some(PathBuf::from("/tmp/.mount_HoverPabc/usr/bin/hoverpill"));
+            assert_eq!(
+                launcher_from(Some("/home/me/Apps/HoverPill.AppImage".into()), mount.clone()),
+                Some(PathBuf::from("/home/me/Apps/HoverPill.AppImage"))
+            );
+            assert_eq!(launcher_from(Some("".into()), mount.clone()), mount);
+            assert_eq!(launcher_from(None, Some(PathBuf::from("/usr/bin/hoverpill"))), Some(PathBuf::from("/usr/bin/hoverpill")));
+        }
+
+        #[test]
+        fn the_same_keys_match_however_gnome_spells_them() {
+            let ours = parse_accelerator("<Control><Alt>g");
+            assert_eq!(parse_accelerator("<Primary><Alt>g"), ours);
+            assert_eq!(parse_accelerator("<Ctrl><Alt>G"), ours);
+            assert_eq!(parse_accelerator("<Alt><Control>g"), ours);
+            assert_eq!(parse_accelerator("<Ctl><Mod1>g"), ours);
+            assert_ne!(parse_accelerator("<Control><Shift>g"), ours);
+            assert_eq!(parse_accelerator("<Super>space"), parse_accelerator("<Mod4>space"));
+            assert_ne!(parse_accelerator("<Super>space"), parse_accelerator("<Super>Space_L"));
+            assert_eq!(parse_accelerator("Ubuntu Sans 11"), None);
+            assert_eq!(parse_accelerator(""), None);
+        }
+
+        #[test]
+        fn finds_the_bindings_in_gsettings_output() {
+            let out = "org.gnome.desktop.wm.keybindings switch-to-workspace-1 ['<Super>Home', '<Alt>F1']\norg.gnome.desktop.wm.keybindings close @as []";
+            assert_eq!(quoted(out), vec!["<Super>Home".to_string(), "<Alt>F1".to_string()]);
+            assert_eq!(quoted("'<Primary><Alt>t'"), vec!["<Primary><Alt>t".to_string()]);
+        }
 
         #[test]
         fn turns_settings_shortcuts_into_gnome_accelerators() {

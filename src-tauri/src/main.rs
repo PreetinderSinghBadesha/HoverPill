@@ -175,6 +175,8 @@ fn main() {
             shortcut::summon_from_args(app.handle(), &args);
             accounts::google::spawn(app.handle().clone());
             updater::spawn(app.handle().clone());
+            #[cfg(target_os = "linux")]
+            exit_on_signal(app.handle().clone());
             autostart::refresh(app.handle());
             tray::init(app)?;
             Ok(())
@@ -182,9 +184,37 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building HoverPill")
         .run(|_app, event| {
-            // Give the reserved top strip back, or Windows keeps it until it notices we're gone.
             if let tauri::RunEvent::Exit = event {
+                // Give the reserved top strip back, or Windows keeps it until it notices we're gone.
                 appbar::release();
+                // And the GNOME shortcuts, so none stay behind after HoverPill is gone.
+                shortcut::remove_desktop_shortcuts();
             }
         });
+}
+
+/// Linux: logging out (or `kill`) sends SIGTERM, which would end the process without Tauri's
+/// `Exit` event, and so without removing the GNOME shortcuts. Turn SIGTERM and SIGINT into a
+/// normal exit instead. The handler only sets a flag; a thread notices it and exits.
+#[cfg(target_os = "linux")]
+fn exit_on_signal(app: tauri::AppHandle) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static STOP: AtomicBool = AtomicBool::new(false);
+    extern "C" fn on_signal(_: libc::c_int) {
+        STOP.store(true, Ordering::SeqCst);
+    }
+    // SAFETY: the handler only stores to an atomic, which is async-signal-safe.
+    unsafe {
+        let handler = on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        libc::signal(libc::SIGTERM, handler);
+        libc::signal(libc::SIGINT, handler);
+    }
+    let _ = std::thread::Builder::new().name("hoverpill-signals".into()).spawn(move || loop {
+        if STOP.load(Ordering::SeqCst) {
+            app.exit(0);
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    });
 }
