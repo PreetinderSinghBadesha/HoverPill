@@ -18,4 +18,4 @@ windows = { version = "0.62", features = [
 windows-future = "0.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-zbus = "5"
+zbus = "6"
